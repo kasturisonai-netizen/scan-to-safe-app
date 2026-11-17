@@ -1,0 +1,8 @@
+{
+  "name": "Scan to Safe",
+  "short_name": "ScanSafe",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f7f4",
+  "theme_color": "#edf3ed"
+}
