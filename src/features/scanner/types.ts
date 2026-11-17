@@ -24,3 +24,4 @@ export interface ProductBatch {
   dateVerified: boolean;
   rawOcrText?: string;
 }
+export type ImageInputSource = 'camera' | 'gallery';
