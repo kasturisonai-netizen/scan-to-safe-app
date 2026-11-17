@@ -1,0 +1,37 @@
+name: Apply Scan to Safe OCR Update
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - scan-to-safe-ocr-update.zip
+
+permissions:
+  contents: write
+
+jobs:
+  apply-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply OCR files
+        run: |
+          unzip -o scan-to-safe-ocr-update.zip
+          cp -R scan-to-safe-ocr-update/. .
+          rm -rf scan-to-safe-ocr-update
+          rm -f scan-to-safe-ocr-update.zip
+
+      - name: Save updated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Add image OCR and expiry date extraction"
+            git push
+          fi
