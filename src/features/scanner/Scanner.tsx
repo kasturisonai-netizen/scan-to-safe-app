@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Camera, ImagePlus, ScanText, RefreshCw, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react';
 import { createWorker } from 'tesseract.js';
+import { Capacitor } from '@capacitor/core';
+import { Directory, Filesystem } from '@capacitor/filesystem';
+import { Script, TextRecognition } from '@capacitor-mlkit/text-recognition';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import type { ImageInputSource } from './types';
 import { extractDateCandidates, firstTextValue } from './dateExtraction';
@@ -9,6 +12,20 @@ import type { DateCandidate } from './dateExtraction';
 interface Props { onImageSelected?: (file: File, source: ImageInputSource) => void; }
 interface Photo { file: File; url: string; }
 interface CodeDetails { text: string; format: string; gtin?: string; batch?: string; expiry?: string; bestBefore?: string; production?: string; serial?: string; }
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result ?? '');
+      const comma = value.indexOf(',');
+      if (comma < 0) reject(new Error('Could not prepare image for on-device OCR'));
+      else resolve(value.slice(comma + 1));
+    };
+    reader.onerror = () => reject(new Error('Could not read image file'));
+    reader.readAsDataURL(file);
+  });
+}
 
 function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -148,7 +165,7 @@ export default function Scanner({onImageSelected}:Props){
   const [rawText,setRawText]=useState(''),[dates,setDates]=useState<DateCandidate[]>([]);
   const [productName,setProductName]=useState(''),[brand,setBrand]=useState(''),[batch,setBatch]=useState('');
   const [expiry,setExpiry]=useState(''),[mfg,setMfg]=useState(''),[best,setBest]=useState('');
-  const [confidence,setConfidence]=useState<number|null>(null),[code,setCode]=useState<CodeDetails|null>(null);
+  const [confidence,setConfidence]=useState<number|null>(null),[ocrEngine,setOcrEngine]=useState(''),[code,setCode]=useState<CodeDetails|null>(null);
   const [codeStatus,setCodeStatus]=useState('Not checked yet'),[manualFlags,setManualFlags]=useState<string[]>([]);
   useEffect(()=>()=>{if(full)URL.revokeObjectURL(full.url);if(close)URL.revokeObjectURL(close.url);},[full,close]);
 
@@ -169,10 +186,23 @@ export default function Scanner({onImageSelected}:Props){
       const decoded=await Promise.all(photos.map(photo=>readCode(photo.file)));
       const found=decoded.find(Boolean)??null;setCode(found);
       setCodeStatus(found?'A code was decoded. Review its contents below.':'No readable barcode or QR code was found in these photos.');
-      worker=await createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text')setProgress(`Reading label… ${Math.round((m.progress??0)*100)}%`);}});
-      const results:{text:string;confidence:number}[]=[];
+      const nativeOcr=Capacitor.isNativePlatform();
+      setOcrEngine(nativeOcr?'Google ML Kit (on-device)':'Tesseract (browser)');
+      if(!nativeOcr) worker=await createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text')setProgress(`Reading label… ${Math.round((m.progress??0)*100)}%`);}});
+      const results:{text:string;confidence:number|null}[]=[];
       for(let i=0;i<photos.length;i++){
         const isClosePhoto=Boolean(close)&&photos[i]===close;
+        if(nativeOcr){
+          setProgress('Recognising text on this device…');
+          const base64=await fileToBase64(photos[i].file);
+          const name=`scan-${Date.now()}-${i}.jpg`;
+          const stored=await Filesystem.writeFile({path:name,data:base64,directory:Directory.Cache,recursive:true});
+          try {
+            const recognised=await TextRecognition.processImage({path:stored.uri,script:Script.Latin});
+            if(recognised.text.trim()) results.push({text:recognised.text.trim(),confidence:null});
+          } finally { await Filesystem.deleteFile({path:name,directory:Directory.Cache}).catch(()=>undefined); }
+          continue;
+        }
         if(i>0 && results.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
         setProgress(isClosePhoto?'Preparing date-label close-up…':'Preparing product photo…');
         const variants=await makeOcrVariants(photos[i].file);
@@ -200,7 +230,7 @@ export default function Scanner({onImageSelected}:Props){
         }
       }
       const text=results.map(x=>x.text).filter(Boolean).join('\n\n--- CLOSE-UP ---\n\n');
-      setRawText(text);setConfidence(results.length?Math.round(results.reduce((a,b)=>a+b.confidence,0)/results.length):0);
+      setRawText(text);const scored=results.filter((item):item is {text:string;confidence:number}=>item.confidence!==null);setConfidence(scored.length?Math.round(scored.reduce((a,b)=>a+b.confidence,0)/scored.length):null);
       const foundDates=extractDateCandidates(text);setDates(foundDates);
       const e=foundDates.find(x=>x.kind==='expiry'),m=foundDates.find(x=>x.kind==='manufacturing'),b=foundDates.find(x=>x.kind==='best-before');
       setExpiry(e?.raw??found?.expiry??'');setMfg(m?.raw??found?.production??'');setBest(b?.raw??found?.bestBefore??'');
@@ -239,7 +269,7 @@ export default function Scanner({onImageSelected}:Props){
     {error&&<div className="scan-warning"><AlertTriangle size={17}/><span>{error}</span></div>}
     {(rawText||code)&&!busy&&<div className="ocr-results">
       <div className="result-heading"><CheckCircle2 size={18}/><b>Scan results — verify before saving</b></div>
-      <p className="confidence">OCR confidence: {confidence??0}% (text recognition confidence, not date correctness).</p>
+      <p className="confidence">{ocrEngine==='Google ML Kit (on-device)'?'Google ML Kit on-device recognition. No comparable confidence score is provided.':'OCR confidence: '+(confidence??0)+'% (text recognition confidence, not date correctness).'}</p>
       <div className="code-panel"><div className="result-heading"><QrCode size={18}/><b>Barcode / QR result</b></div><p>{codeStatus}</p>{code&&<><pre className="raw-ocr">{code.format}: {code.text}</pre><dl className="code-fields">{code.gtin&&<div><dt>GTIN</dt><dd>{code.gtin}</dd></div>}{code.batch&&<div><dt>Encoded batch</dt><dd>{code.batch}</dd></div>}{code.expiry&&<div><dt>Encoded expiry (AI 17)</dt><dd>{code.expiry}</dd></div>}{code.bestBefore&&<div><dt>Encoded best-before (AI 15)</dt><dd>{code.bestBefore}</dd></div>}{code.production&&<div><dt>Encoded production date (AI 11)</dt><dd>{code.production}</dd></div>}{code.serial&&<div><dt>Serial number</dt><dd>{code.serial}</dd></div>}</dl><p className="muted">Many ordinary barcodes contain only a product identifier. A decoded code does not prove authenticity.</p></>}</div>
       {mismatch&&<div className="scan-warning"><AlertTriangle size={17}/><span>Printed expiry and encoded expiry differ. This needs manual checking; it does not prove tampering.</span></div>}
       <h3>Possible dates found</h3>{dates.length?<div className="candidate-list">{dates.map((d,i)=><button type="button" className="candidate" key={d.raw+i} onClick={()=>applyDate(d)}><b>{d.raw}</b><span>{d.kind}</span><small>{d.context}</small></button>)}</div>:<p className="muted">No date-like text was detected.</p>}
