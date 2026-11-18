@@ -34,13 +34,43 @@ function preprocess(file: File): Promise<HTMLCanvasElement> {
 }
 
 function parseCode(raw: string, format: string): CodeDetails {
-  const text=raw.replace(/\u001d/g,'');
-  const field=(ai:string,length:number,variable=false)=>{
-    const index=text.indexOf(ai); if(index<0)return undefined;
-    return text.slice(index+ai.length,variable?index+ai.length+20:index+ai.length+length)||undefined;
+  const source = raw.replace(/^\](?:C1|d2|Q3)/, '');
+  const values: Record<string, string> = {};
+  const known = ['01', '10', '11', '13', '15', '16', '17', '21'];
+  const fixed: Record<string, number> = { '01': 14, '11': 6, '13': 6, '15': 6, '16': 6, '17': 6 };
+  const save = (ai: string, value: string) => { if (value) values[ai] = value; };
+  if (/\(\d{2,4}\)/.test(source)) {
+    const re = /\((\d{2,4})\)([^()]*)/g;
+    for (const match of source.matchAll(re)) save(match[1], match[2].trim());
+  } else {
+    let i = 0;
+    while (i < source.length) {
+      if (source.charCodeAt(i) === 29) { i++; continue; }
+      const ai = known.find(candidate => source.startsWith(candidate, i));
+      if (!ai) { i++; continue; }
+      i += ai.length;
+      if (fixed[ai]) {
+        const value = source.slice(i, i + fixed[ai]);
+        if (value.length !== fixed[ai]) break;
+        save(ai, value); i += fixed[ai];
+      } else {
+        const separator = source.indexOf(String.fromCharCode(29), i);
+        const value = (separator < 0 ? source.slice(i) : source.slice(i, separator)).slice(0, 20);
+        save(ai, value);
+        i += separator < 0 ? source.length - i : value.length;
+      }
+    }
+  }
+  const gs1Date = (value?: string) => {
+    if (!value || !/^\d{6}$/.test(value)) return undefined;
+    const yy = Number(value.slice(0, 2)), month = Number(value.slice(2, 4)), day = Number(value.slice(4, 6));
+    if (month < 1 || month > 12 || day > 31) return undefined;
+    const actualDay = day === 0 ? new Date(2000 + yy, month, 0).getDate() : day;
+    return String(actualDay).padStart(2, '0') + '/' + String(month).padStart(2, '0') + '/20' + value.slice(0, 2);
   };
-  const date=(value?:string)=>value&&/^\d{6}$/.test(value)?`${value.slice(4,6)}/${value.slice(2,4)}/20${value.slice(0,2)}`:undefined;
-  return {text:raw,format,gtin:field('01',14),batch:field('10',20,true),production:date(field('11',6)),bestBefore:date(field('15',6)),expiry:date(field('17',6)),serial:field('21',20,true)};
+  return { text: raw, format, gtin: values['01'], batch: values['10'],
+    production: gs1Date(values['11']), bestBefore: gs1Date(values['15']),
+    expiry: gs1Date(values['17']), serial: values['21'] };
 }
 
 async function readCode(file:File):Promise<CodeDetails|null>{
@@ -84,9 +114,29 @@ export default function Scanner({onImageSelected}:Props){
       worker=await createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text')setProgress(`Reading label… ${Math.round((m.progress??0)*100)}%`);}});
       const results:{text:string;confidence:number}[]=[];
       for(let i=0;i<photos.length;i++){
-        setProgress(i===0?'Reading full product photo…':'Reading date-label close-up…');
-        const canvas=await preprocess(photos[i].file);const result=await worker.recognize(canvas);
-        results.push({text:result.data.text.trim(),confidence:result.data.confidence});
+        setProgress(i===0?'Reading full product photo (checking rotation)…':'Reading date-label close-up (checking rotation)…');
+        const base=await preprocess(photos[i].file);
+        const attempts: HTMLCanvasElement[] = [];
+        for (const angle of [0, 90, 180, 270]) {
+          const rotated=document.createElement('canvas');
+          const sideways=angle===90||angle===270;
+          rotated.width=(sideways?base.height:base.width)*2;
+          rotated.height=(sideways?base.width:base.height)*2;
+          const ctx=rotated.getContext('2d');
+          if(!ctx) continue;
+          ctx.translate(rotated.width/2,rotated.height/2);
+          ctx.rotate(angle*Math.PI/180);
+          ctx.drawImage(base,-base.width,-base.height,base.width*2,base.height*2);
+          attempts.push(rotated);
+        }
+        let bestResult:{text:string;confidence:number}|null=null;
+        for(let j=0;j<attempts.length;j++){
+          setProgress('Reading ' + (i===0?'product photo':'date close-up') + '… orientation ' + (j+1) + '/' + attempts.length);
+          const result=await worker.recognize(attempts[j]);
+          const candidate={text:result.data.text.trim(),confidence:result.data.confidence};
+          if(!bestResult||candidate.confidence>bestResult.confidence) bestResult=candidate;
+        }
+        if(bestResult) results.push(bestResult);
       }
       const text=results.map(x=>x.text).filter(Boolean).join('\n\n--- CLOSE-UP ---\n\n');
       setRawText(text);setConfidence(results.length?Math.round(results.reduce((a,b)=>a+b.confidence,0)/results.length):0);
