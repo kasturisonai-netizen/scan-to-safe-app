@@ -98,7 +98,25 @@ async function makeOcrVariants(file: File): Promise<HTMLCanvasElement[]> {
     bp.data[i] = bp.data[i + 1] = bp.data[i + 2] = bw; bp.data[i + 3] = 255;
   }
   ectx.putImageData(ep, 0, 0); bctx.putImageData(bp, 0, 0);
-  return [enhanced, binary];
+  // A close-up photo often contains a small label surrounded by a large amount of
+  // packaging. Feed a centre crop first so the printed characters occupy more pixels.
+  const centreCrop = (source: HTMLCanvasElement, fraction: number) => {
+    const cropWidth = Math.max(1, Math.round(source.width * fraction));
+    const cropHeight = Math.max(1, Math.round(source.height * fraction));
+    const crop = document.createElement('canvas');
+    crop.width = Math.min(2600, cropWidth * 2);
+    crop.height = Math.min(2600, cropHeight * 2);
+    const cropCtx = crop.getContext('2d');
+    if (cropCtx) {
+      cropCtx.imageSmoothingEnabled = true;
+      cropCtx.imageSmoothingQuality = 'high';
+      cropCtx.drawImage(source,
+        Math.round((source.width - cropWidth) / 2), Math.round((source.height - cropHeight) / 2),
+        cropWidth, cropHeight, 0, 0, crop.width, crop.height);
+    }
+    return crop;
+  };
+  return [centreCrop(enhanced, 0.58), centreCrop(binary, 0.58), enhanced, binary];
 }
 
 function rotateCanvas(source: HTMLCanvasElement, angle: number): HTMLCanvasElement {
@@ -168,8 +186,32 @@ async function readCode(file:File):Promise<CodeDetails|null>{
   const url=URL.createObjectURL(file); const image=new Image(); image.src=url;
   try {
     await new Promise<void>((resolve,reject)=>{image.onload=()=>resolve();image.onerror=()=>reject(new Error('Image load failed'));});
-    const result=await new BrowserMultiFormatReader().decodeFromImageElement(image);
-    return parseCode(result.getText(),String(result.getBarcodeFormat()));
+    const reader = new BrowserMultiFormatReader();
+    const regions = [
+      {x:0,y:0,w:1,h:1},
+      {x:0.15,y:0.15,w:0.7,h:0.7},
+      {x:0.05,y:0.05,w:0.9,h:0.9},
+    ];
+    for (const region of regions) {
+      const canvas=document.createElement('canvas');
+      canvas.width=Math.min(2400,Math.round(image.naturalWidth*region.w*2));
+      canvas.height=Math.min(2400,Math.round(image.naturalHeight*region.h*2));
+      const ctx=canvas.getContext('2d');
+      if(!ctx) continue;
+      ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+      ctx.drawImage(image,
+        Math.round(image.naturalWidth*region.x),Math.round(image.naturalHeight*region.y),
+        Math.round(image.naturalWidth*region.w),Math.round(image.naturalHeight*region.h),
+        0,0,canvas.width,canvas.height);
+      const candidate=new Image();
+      candidate.src=canvas.toDataURL('image/png');
+      await new Promise<void>((resolve,reject)=>{candidate.onload=()=>resolve();candidate.onerror=()=>reject(new Error('QR crop failed'));});
+      try {
+        const result=await reader.decodeFromImageElement(candidate);
+        return parseCode(result.getText(),String(result.getBarcodeFormat()));
+      } catch { /* try the next crop */ }
+    }
+    return null;
   } catch { return null; } finally { URL.revokeObjectURL(url); }
 }
 
@@ -229,7 +271,7 @@ export default function Scanner({onImageSelected}:Props){
         if(!worker) throw new Error('Browser OCR worker is unavailable');
         const candidates:{text:string;confidence:number;score:number}[]=[];
         for(let j=0;j<attempts.length;j++){
-          if(j===2 && candidates.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
+          if(j>=2 && candidates.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
           setProgress('Reading ' + (isClosePhoto?'date close-up':'product photo') + '… pass ' + (j+1) + '/' + attempts.length);
           const result=await worker.recognize(attempts[j]);
           const text=result.data.text.trim();
@@ -243,7 +285,7 @@ export default function Scanner({onImageSelected}:Props){
           const key=candidate.text.toLowerCase().replace(/[^a-z0-9]/g,'');
           if(key.length<3||seen.has(key)) continue;
           seen.add(key); selected.push(candidate.text);
-          if(selected.length===3) break;
+          if(selected.length===2) break;
         }
         if(selected.length){
           const confidence=candidates.slice(0,Math.min(3,candidates.length)).reduce((sum,item)=>sum+item.confidence,0)/Math.min(3,candidates.length);
