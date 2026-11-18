@@ -5,3 +5,12 @@
 
 /* Multi-photo, barcode and packaging review */
 .closeup-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:16px;padding:12px;background:#f6f9f6;border:1px solid #e2eae3;border-radius:13px}.closeup-row b{font-size:12px}.closeup-row p{font-size:11px;margin:4px 0 0}.closeup-actions{display:flex;gap:6px}.closeup-actions button{border:1px solid #d5e2d7;background:#fff;color:#315f43;border-radius:9px;padding:8px;font-size:11px}.photo-previews{display:grid;gap:8px}.scan-submit{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;min-height:46px}.code-panel{padding:13px;margin:14px 0;background:#f5f8f5;border:1px solid #e0e9e1;border-radius:13px}.code-panel>p{font-size:12px;line-height:1.5}.code-fields{display:grid;gap:7px;margin:10px 0}.code-fields div{display:flex;justify-content:space-between;gap:10px;font-size:11px}.code-fields dt{color:#718078}.code-fields dd{margin:0;font-weight:750;overflow-wrap:anywhere;text-align:right}.flag-check{display:flex!important;align-items:flex-start;gap:9px;font-weight:500!important;line-height:1.45}.flag-check input{width:auto!important;margin:2px 0 0!important;flex:0 0 auto}.photo-previews .preview-wrap{min-width:0}.photo-previews .preview-wrap img{flex:0 0 82px}@media(max-width:420px){.closeup-row{align-items:flex-start;flex-direction:column}.closeup-actions{width:100%}.closeup-actions button{flex:1}}
+
+
+/* Mobile-safe native file picker targets: the actual input receives the tap. */
+.file-choice{position:relative;cursor:pointer;overflow:hidden}
+.file-choice:has(.file-input-overlay:disabled){opacity:.55;cursor:not-allowed}
+.file-input-overlay{position:absolute;inset:0;width:100%;height:100%;margin:0!important;padding:0!important;opacity:0;cursor:pointer;z-index:2}
+.file-action{position:relative;display:inline-flex;align-items:center;justify-content:center;border:1px solid #d5e2d7;background:#fff;color:#315f43;border-radius:9px;padding:8px;font-size:11px;flex:1;cursor:pointer;overflow:hidden}
+.file-action input{position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0!important;padding:0!important;cursor:pointer}
+.closeup-actions .file-action{min-width:0}
