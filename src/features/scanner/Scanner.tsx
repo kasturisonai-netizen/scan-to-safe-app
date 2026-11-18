@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Camera, ImagePlus, ScanText, RefreshCw, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react';
-import { createWorker } from 'tesseract.js';
 import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Script, TextRecognition } from '@capacitor-mlkit/text-recognition';
@@ -29,7 +28,7 @@ async function compressForCloudOcr(file: File): Promise<string> {
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(value => value ? resolve(value) : reject(new Error('Could not prepare photo for cloud OCR.')), 'image/jpeg', 0.86)
   );
-  if (blob.size > 4 * 1024 * 1024) throw new Error('Photo is too large to send. Choose a smaller image.');
+  if (blob.size > 3 * 1024 * 1024) throw new Error('Photo is too large to send. Choose a smaller image.');
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
@@ -51,20 +50,6 @@ async function readWithCloudVision(file: File): Promise<{text:string;confidence:
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || 'Cloud OCR request failed.');
   return { text: String(payload.text || '').trim(), confidence: typeof payload.confidence === 'number' ? payload.confidence : null };
-}
-
-// Keep the browser OCR worker warm between scans; worker startup is expensive on mobile.
-let browserWorkerPromise: ReturnType<typeof createWorker> | null = null;
-let activeOcrProgress: ((message: string) => void) | null = null;
-async function getBrowserOcrWorker() {
-  if (!browserWorkerPromise) {
-    browserWorkerPromise = createWorker('eng', 1, {
-      logger: message => {
-        if (message.status === 'recognizing text') activeOcrProgress?.(`Reading label… ${Math.round((message.progress ?? 0) * 100)}%`);
-      },
-    }).catch(error => { browserWorkerPromise = null; throw error; });
-  }
-  return browserWorkerPromise;
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -89,102 +74,6 @@ function loadImage(file: File): Promise<HTMLImageElement> {
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image could not load')); };
     img.src = url;
   });
-}
-
-async function makeOcrVariants(file: File): Promise<HTMLCanvasElement[]> {
-  const img = await loadImage(file);
-  const scale = Math.min(3, Math.max(1.5, 2200 / Math.max(img.width, img.height)));
-  const width = Math.round(img.width * scale), height = Math.round(img.height * scale);
-  const base = document.createElement('canvas');
-  base.width = width; base.height = height;
-  const ctx = base.getContext('2d');
-  if (!ctx) throw new Error('Canvas unavailable');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, width, height);
-  const pixels = ctx.getImageData(0, 0, width, height);
-  const grey = new Uint8ClampedArray(width * height);
-  const histogram = new Array<number>(256).fill(0);
-  for (let p = 0, i = 0; p < grey.length; p++, i += 4) {
-    const value = Math.max(0, Math.min(255, (0.299 * pixels.data[i] + 0.587 * pixels.data[i + 1] + 0.114 * pixels.data[i + 2] - 128) * 1.65 + 128));
-    grey[p] = value; histogram[Math.round(value)]++;
-  }
-  // Otsu threshold creates a clean high-contrast copy for dotted thermal printing.
-  const total = grey.length;
-  let sum = 0;
-  for (let i = 0; i < 256; i++) sum += i * histogram[i];
-  let sumB = 0, weightB = 0, maxVariance = -1, threshold = 128;
-  for (let i = 0; i < 256; i++) {
-    weightB += histogram[i];
-    if (!weightB) continue;
-    const weightF = total - weightB;
-    if (!weightF) break;
-    sumB += i * histogram[i];
-    const variance = weightB * weightF * Math.pow(sumB / weightB - (sum - sumB) / weightF, 2);
-    if (variance > maxVariance) { maxVariance = variance; threshold = i; }
-  }
-  const enhanced = document.createElement('canvas');
-  enhanced.width = width; enhanced.height = height;
-  const ectx = enhanced.getContext('2d');
-  const binary = document.createElement('canvas');
-  binary.width = width; binary.height = height;
-  const bctx = binary.getContext('2d');
-  if (!ectx || !bctx) throw new Error('Canvas unavailable');
-  const ep = ectx.createImageData(width, height);
-  const bp = bctx.createImageData(width, height);
-  for (let p = 0, i = 0; p < grey.length; p++, i += 4) {
-    const v = grey[p], bw = v > threshold ? 255 : 0;
-    ep.data[i] = ep.data[i + 1] = ep.data[i + 2] = v; ep.data[i + 3] = 255;
-    bp.data[i] = bp.data[i + 1] = bp.data[i + 2] = bw; bp.data[i + 3] = 255;
-  }
-  ectx.putImageData(ep, 0, 0); bctx.putImageData(bp, 0, 0);
-  // A close-up photo often contains a small label surrounded by a large amount of
-  // packaging. Feed a centre crop first so the printed characters occupy more pixels.
-  const centreCrop = (source: HTMLCanvasElement, fraction: number) => {
-    const cropWidth = Math.max(1, Math.round(source.width * fraction));
-    const cropHeight = Math.max(1, Math.round(source.height * fraction));
-    const crop = document.createElement('canvas');
-    crop.width = Math.min(2600, cropWidth * 2);
-    crop.height = Math.min(2600, cropHeight * 2);
-    const cropCtx = crop.getContext('2d');
-    if (cropCtx) {
-      cropCtx.imageSmoothingEnabled = true;
-      cropCtx.imageSmoothingQuality = 'high';
-      cropCtx.drawImage(source,
-        Math.round((source.width - cropWidth) / 2), Math.round((source.height - cropHeight) / 2),
-        cropWidth, cropHeight, 0, 0, crop.width, crop.height);
-    }
-    return crop;
-  };
-  return [
-    centreCrop(base, 0.58),       // retain colour and local contrast for small printed labels
-    centreCrop(enhanced, 0.58),   // sharpened greyscale
-    centreCrop(binary, 0.58),     // thermal/dot-matrix print
-    base, enhanced, binary,      // full-frame fallbacks
-  ];
-}
-
-function rotateCanvas(source: HTMLCanvasElement, angle: number): HTMLCanvasElement {
-  const sideways = angle === 90 || angle === 270;
-  const canvas = document.createElement('canvas');
-  canvas.width = sideways ? source.height : source.width;
-  canvas.height = sideways ? source.width : source.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return source;
-  ctx.translate(canvas.width / 2, canvas.height / 2);
-  ctx.rotate(angle * Math.PI / 180);
-  ctx.drawImage(source, -source.width / 2, -source.height / 2);
-  return canvas;
-}
-
-function ocrScore(text: string, confidence: number): number {
-  const lower = text.toLowerCase();
-  const candidates = extractDateCandidates(text);
-  const labelled = candidates.filter(x => x.kind !== 'unknown').length;
-  const dateLike = candidates.length;
-  const labels = (lower.match(/exp|expiry|use by|best before|mfg|manufactur|batch|lot|pkd|packed/g) ?? []).length;
-  // Prefer readable date/label content over a high-confidence result that contains no useful dates.
-  return confidence * 0.2 + labelled * 45 + dateLike * 12 + labels * 5 + Math.min(text.length, 1200) * 0.005;
 }
 
 function parseCode(raw: string, format: string): CodeDetails {
