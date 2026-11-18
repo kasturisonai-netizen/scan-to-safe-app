@@ -207,6 +207,7 @@ export default function Scanner({onImageSelected}:Props){
         setProgress(isClosePhoto?'Preparing date-label close-up…':'Preparing product photo…');
         const variants=await makeOcrVariants(photos[i].file);
         const attempts=variants.flatMap(variant=>[0,90].map(angle=>rotateCanvas(variant,angle)));
+        if(!worker) throw new Error('Browser OCR worker is unavailable');
         const candidates:{text:string;confidence:number;score:number}[]=[];
         for(let j=0;j<attempts.length;j++){
           setProgress('Reading ' + (isClosePhoto?'date close-up':'product photo') + '… pass ' + (j+1) + '/' + attempts.length);
