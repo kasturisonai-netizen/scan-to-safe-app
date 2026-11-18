@@ -176,15 +176,28 @@ export default function Scanner({onImageSelected}:Props){
       for(let i=0;i<photos.length;i++){
         setProgress(i===0?'Preparing product photo…':'Preparing date-label close-up…');
         const variants=await makeOcrVariants(photos[i].file);
-        const attempts=variants.flatMap(variant=>[0,90,270].map(angle=>rotateCanvas(variant,angle)));
-        let bestResult:{text:string;confidence:number;score:number}|null=null;
+        const attempts=variants.flatMap(variant=>[0,90,180,270].map(angle=>rotateCanvas(variant,angle)));
+        const candidates:{text:string;confidence:number;score:number}[]=[];
         for(let j=0;j<attempts.length;j++){
           setProgress('Reading ' + (i===0?'product photo':'date close-up') + '… pass ' + (j+1) + '/' + attempts.length);
           const result=await worker.recognize(attempts[j]);
-          const candidate={text:result.data.text.trim(),confidence:result.data.confidence,score:ocrScore(result.data.text,result.data.confidence)};
-          if(!bestResult||candidate.score>bestResult.score) bestResult=candidate;
+          const text=result.data.text.trim();
+          if(text) candidates.push({text,confidence:result.data.confidence,score:ocrScore(text,result.data.confidence)});
         }
-        if(bestResult) results.push({text:bestResult.text,confidence:bestResult.confidence});
+        // Keep several complementary readings: one pass may catch the date while another catches its label.
+        const selected:string[]=[];
+        const seen=new Set<string>();
+        candidates.sort((a,b)=>b.score-a.score);
+        for(const candidate of candidates){
+          const key=candidate.text.toLowerCase().replace(/[^a-z0-9]/g,'');
+          if(key.length<3||seen.has(key)) continue;
+          seen.add(key); selected.push(candidate.text);
+          if(selected.length===3) break;
+        }
+        if(selected.length){
+          const confidence=candidates.slice(0,Math.min(3,candidates.length)).reduce((sum,item)=>sum+item.confidence,0)/Math.min(3,candidates.length);
+          results.push({text:selected.join('\\n--- OCR PASS ---\\n'),confidence});
+        }
       }
       const text=results.map(x=>x.text).filter(Boolean).join('\n\n--- CLOSE-UP ---\n\n');
       setRawText(text);setConfidence(results.length?Math.round(results.reduce((a,b)=>a+b.confidence,0)/results.length):0);
