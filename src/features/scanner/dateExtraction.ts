@@ -28,7 +28,7 @@ function isPlausibleDate(raw:string):boolean {
 function classify(context:string):DateKind {
   const s=context.toLowerCase().replace(/[.:]/g,' ');
   if (/best\s*before|use\s*within/.test(s)) return 'best-before';
-  if (/exp(?:iry|iration)?\s*(?:date|dt)?|use\s*by|expires|expiry|valid\s*until/.test(s)) return 'expiry';
+  if (/exp(?:iry|iration)?\s*(?:date|dt)?|use\s*by|use\s*before|expires|expiry|valid\s*until/.test(s)) return 'expiry';
   if (/mfg|manufactur(?:ed|ing)?|packed\s*on|pkd|date\s*of\s*manufacture/.test(s)) return 'manufacturing';
   return 'unknown';
 }
@@ -44,8 +44,13 @@ export function extractDateCandidates(text:string):DateCandidate[] {
       let offset=0, lineIndex=0;
       for(let i=0;i<lines.length;i++){if(index<=offset+lines[i].length){lineIndex=i;break;}offset+=lines[i].length+1;}
       const context=[lines[lineIndex-1]??'',lines[lineIndex]??'',lines[lineIndex+1]??''].join(' ').replace(/\s+/g,' ').trim().slice(0,220);
+      // OCR may place a small date label on a neighbouring line or text block.
+      // Fall back to a bounded window around the date when its own line has no label.
+      const nearby=text.slice(Math.max(0,index-100),Math.min(text.length,index+raw.length+100)).replace(/\s+/g,' ');
+      const localKind=classify(context);
+      const kind=localKind==='unknown'?classify(nearby):localKind;
       const key=raw.toLowerCase();
-      if(!seen.has(key)){seen.add(key);found.push({raw,context,kind:classify(context)});}
+      if(!seen.has(key)){seen.add(key);found.push({raw,context,kind});}
     }
   }
   const rank=(kind:DateKind)=>kind==='expiry'?0:kind==='best-before'?1:kind==='manufacturing'?2:3;
