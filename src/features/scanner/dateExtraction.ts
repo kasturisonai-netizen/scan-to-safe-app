@@ -45,6 +45,30 @@ function classify(context:string):DateKind {
   return 'unknown';
 }
 
+
+function classifyNearestLabel(text:string,dateIndex:number):DateKind {
+  const labelPatterns: Array<{kind:DateKind; pattern:RegExp}> = [
+    {kind:'manufacturing',pattern:/\b(?:mfg\.?\s*(?:date|dt|on)?|mfd\.?\s*(?:date|dt|on)?|manufactur(?:e|ed|ing)(?:\s*date)?|date\s*of\s*manufacture|dom|prod\.?\s*(?:date|dt)|production\s*date|pkd|pkg\.?\s*(?:date|dt)|packed\s*on|packing\s*date|date\s*packed)\b/gi},
+    {kind:'best-before',pattern:/\b(?:best\s*before(?:\s*end)?|bbe|bbd|bb\s*date|use\s*within|consume\s*within|consume\s*before)\b/gi},
+    {kind:'expiry',pattern:/\b(?:expiry|expires?|expiration|exp\.?\s*(?:date|dt|on)?|e\.?\s*d\.?|use\s*by|use\s*before|sell\s*by|sell\s*before|consume\s*by|valid\s*(?:until|till|upto|up\s*to)|discard\s*after|do\s*not\s*use\s*after)\b/gi}
+  ];
+  const labels:Array<{kind:DateKind;index:number;end:number}>=[];
+  for(const item of labelPatterns){
+    item.pattern.lastIndex=0;
+    for(const m of text.matchAll(item.pattern)){
+      const index=m.index??0;
+      if(Math.abs(dateIndex-index)<=140) labels.push({kind:item.kind,index,end:index+m[0].length});
+    }
+  }
+  if(!labels.length) return 'unknown';
+  // Prefer the closest label before the date. A label after the date is a fallback.
+  const preceding=labels.filter(x=>x.end<=dateIndex).sort((a,b)=>b.end-a.end)[0];
+  if(preceding && dateIndex-preceding.end<=100) return preceding.kind;
+  const following=labels.filter(x=>x.index>dateIndex).sort((a,b)=>a.index-b.index)[0];
+  if(following && following.index-dateIndex<=45) return following.kind;
+  return 'unknown';
+}
+
 export function extractDateCandidates(text:string, positionedLines:PositionedOcrLine[]=[]):DateCandidate[] {
   const found:DateCandidate[]=[];const seen=new Set<string>();
   for(const pattern of DATE_PATTERNS){
@@ -59,10 +83,11 @@ export function extractDateCandidates(text:string, positionedLines:PositionedOcr
       // OCR may place a small date label on a neighbouring line or text block.
       // Fall back to a bounded window around the date when its own line has no label.
       const nearby=text.slice(Math.max(0,index-100),Math.min(text.length,index+raw.length+100)).replace(/\s+/g,' ');
-      const localKind=classify(context);
-      let kind=localKind==='unknown'?classify(nearby):localKind;
+      const localKind=classifyNearestLabel(text,index);
+      let kind=localKind!=='unknown'?localKind:classify(context);
+      if(kind==='unknown') kind=classify(nearby);
       // Associate a date with the nearest labelled OCR line using ML Kit geometry.
-      if(positionedLines.length){
+      if(kind==='unknown' && positionedLines.length){
         const dateLine=positionedLines.find(line=>line.text.toLowerCase().includes(raw.toLowerCase()));
         if(dateLine){
           const dateY=(dateLine.top+dateLine.bottom)/2;
