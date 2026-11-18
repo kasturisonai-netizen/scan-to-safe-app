@@ -1,5 +1,6 @@
 export type DateKind = 'expiry' | 'manufacturing' | 'best-before' | 'unknown';
 export interface DateCandidate { raw: string; context: string; kind: DateKind; }
+export interface PositionedOcrLine { text: string; left: number; top: number; right: number; bottom: number; }
 
 const DATE_PATTERNS = [
   /\b(?:0?[1-9]|[12]\d|3[01])[/.\-](?:0?[1-9]|1[0-2])[/.\-](?:20)?\d{2}\b/g,
@@ -44,7 +45,7 @@ function classify(context:string):DateKind {
   return 'unknown';
 }
 
-export function extractDateCandidates(text:string):DateCandidate[] {
+export function extractDateCandidates(text:string, positionedLines:PositionedOcrLine[]=[]):DateCandidate[] {
   const found:DateCandidate[]=[];const seen=new Set<string>();
   for(const pattern of DATE_PATTERNS){
     pattern.lastIndex=0;
@@ -59,7 +60,20 @@ export function extractDateCandidates(text:string):DateCandidate[] {
       // Fall back to a bounded window around the date when its own line has no label.
       const nearby=text.slice(Math.max(0,index-100),Math.min(text.length,index+raw.length+100)).replace(/\s+/g,' ');
       const localKind=classify(context);
-      const kind=localKind==='unknown'?classify(nearby):localKind;
+      let kind=localKind==='unknown'?classify(nearby):localKind;
+      // Associate a date with the nearest labelled OCR line using ML Kit geometry.
+      if(positionedLines.length){
+        const dateLine=positionedLines.find(line=>line.text.toLowerCase().includes(raw.toLowerCase()));
+        if(dateLine){
+          const dateY=(dateLine.top+dateLine.bottom)/2;
+          const candidates=positionedLines
+            .filter(line=>line!==dateLine && classify(line.text)!=='unknown')
+            .map(line=>({kind:classify(line.text),score:Math.abs((line.top+line.bottom)/2-dateY)/Math.max(1,dateLine.bottom-dateLine.top)+Math.abs((line.left+line.right)/2-(dateLine.left+dateLine.right)/2)/Math.max(1,dateLine.right-dateLine.left)}))
+            .filter(item=>item.score<5)
+            .sort((a,b)=>a.score-b.score);
+          if(candidates.length) kind=candidates[0].kind;
+        }
+      }
       const key=raw.toLowerCase();
       if(!seen.has(key)){seen.add(key);found.push({raw,context,kind});}
     }
