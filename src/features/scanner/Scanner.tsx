@@ -12,44 +12,23 @@ interface Props { onImageSelected?: (file: File, source: ImageInputSource) => vo
 interface Photo { file: File; url: string; }
 interface CodeDetails { text: string; format: string; gtin?: string; batch?: string; expiry?: string; bestBefore?: string; production?: string; serial?: string; }
 
-const CLOUD_OCR_ENDPOINT = import.meta.env.VITE_OCR_API_URL || '';
-
-async function compressForCloudOcr(file: File): Promise<string> {
+async function prepareImageForOcr(file: File): Promise<File> {
   const image = await loadImage(file);
-  const scale = Math.min(1, 2000 / Math.max(image.naturalWidth, image.naturalHeight));
+  const maxSide = 1800;
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+  if (scale === 1 && file.size <= 2_500_000) return file;
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
   const context = canvas.getContext('2d');
-  if (!context) throw new Error('Image processing is unavailable on this device.');
+  if (!context) return file;
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
   const blob = await new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob(value => value ? resolve(value) : reject(new Error('Could not prepare photo for cloud OCR.')), 'image/jpeg', 0.86)
+    canvas.toBlob(value => value ? resolve(value) : reject(new Error('Could not prepare photo.')), 'image/jpeg', 0.9)
   );
-  if (blob.size > 3 * 1024 * 1024) throw new Error('Photo is too large to send. Choose a smaller image.');
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Could not read the prepared photo.'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function readWithCloudVision(file: File): Promise<{text:string;confidence:number|null}> {
-  if (!CLOUD_OCR_ENDPOINT) {
-    throw new Error('Cloud OCR is not connected yet. The secure OCR service still needs to be deployed and configured.');
-  }
-  const imageBase64 = await compressForCloudOcr(file);
-  const response = await fetch(CLOUD_OCR_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageBase64, mimeType: 'image/jpeg' }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'Cloud OCR request failed.');
-  return { text: String(payload.text || '').trim(), confidence: typeof payload.confidence === 'number' ? payload.confidence : null };
+  return new File([blob], 'scan.jpg', { type: 'image/jpeg', lastModified: Date.now() });
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -123,8 +102,7 @@ async function readCode(file:File):Promise<CodeDetails|null>{
     const reader = new BrowserMultiFormatReader();
     const regions = [
       {x:0,y:0,w:1,h:1},
-      {x:0.15,y:0.15,w:0.7,h:0.7},
-      {x:0.05,y:0.05,w:0.9,h:0.9},
+      {x:0.12,y:0.12,w:0.76,h:0.76},
     ];
     for (const region of regions) {
       const canvas=document.createElement('canvas');
@@ -170,45 +148,57 @@ export default function Scanner({onImageSelected}:Props){
   async function scan(){
     if(!full&&!close){setError('Add a product photo or a date-label close-up first.');return;}
     setBusy(true);setError('');setRawText('');setDates([]);setCode(null);setConfidence(null);setCodeStatus('Checking barcode and QR…');
-    let worker:Awaited<ReturnType<typeof createWorker>>|undefined;
-    activeOcrProgress = setProgress;
-    try{
-      const photos=[...(close?[close]:[]),...(full?[full]:[])];
-      const decoded=await Promise.all(photos.map(photo=>readCode(photo.file)));
-      const found=decoded.find(Boolean)??null;setCode(found);
-      setCodeStatus(found?'A code was decoded. Review its contents below.':'No readable barcode or QR code was found in these photos.');
-      const nativeOcr=Capacitor.isNativePlatform();
-      setOcrEngine(nativeOcr?'Google ML Kit (on-device)':'Google Cloud Vision');
-      const results:{text:string;confidence:number|null}[]=[];
-      for(let i=0;i<photos.length;i++){
-        const isClosePhoto=Boolean(close)&&photos[i]===close;
-        if(nativeOcr){
-          setProgress('Recognising text on this device…');
-          const base64=await fileToBase64(photos[i].file);
-          const name=`scan-${Date.now()}-${i}.jpg`;
-          const stored=await Filesystem.writeFile({path:name,data:base64,directory:Directory.Cache,recursive:true});
+    try {
+      const photos = [...(close ? [close] : []), ...(full ? [full] : [])];
+      const nativeOcr = Capacitor.isNativePlatform();
+      setOcrEngine(nativeOcr ? 'Google ML Kit (on-device)' : 'Tesseract.js browser fallback');
+
+      // Run barcode/QR decoding alongside OCR instead of making the user wait for them sequentially.
+      const codeTask = Promise.all(photos.map(photo => readCode(photo.file))).then(decoded => decoded.find(Boolean) ?? null);
+      const ocrTask = Promise.all(photos.map(async (photo, index) => {
+        setProgress(nativeOcr ? 'Recognising text on this device…' : 'Preparing browser OCR…');
+        const prepared = await prepareImageForOcr(photo.file);
+        if (nativeOcr) {
+          const base64 = await fileToBase64(prepared);
+          const name = `scan-${Date.now()}-${index}.jpg`;
+          const stored = await Filesystem.writeFile({ path: name, data: base64, directory: Directory.Cache, recursive: true });
           try {
-            const recognised=await TextRecognition.processImage({path:stored.uri,script:Script.Latin});
-            if(recognised.text.trim()) results.push({text:recognised.text.trim(),confidence:null});
-          } finally { await Filesystem.deleteFile({path:name,directory:Directory.Cache}).catch(()=>undefined); }
-        } else {
-          setProgress(isClosePhoto?'Sending date-label close-up securely for OCR…':'Sending product photo securely for OCR…');
-          results.push(await readWithCloudVision(photos[i].file));
+            const recognised = await TextRecognition.processImage({ path: stored.uri, script: Script.Latin });
+            return { text: recognised.text.trim(), confidence: null as number | null };
+          } finally {
+            await Filesystem.deleteFile({ path: name, directory: Directory.Cache }).catch(() => undefined);
+          }
         }
-      }
-      const text=results.map(x=>x.text).filter(Boolean).join('\n\n--- CLOSE-UP ---\n\n');
-      setRawText(text);const scored=results.filter((item):item is {text:string;confidence:number}=>item.confidence!==null);setConfidence(scored.length?Math.round(scored.reduce((a,b)=>a+b.confidence,0)/scored.length):(results.find(x=>x.confidence!==null)?.confidence??null));
-      const foundDates=extractDateCandidates(text);setDates(foundDates);
-      const e=foundDates.find(x=>x.kind==='expiry'),m=foundDates.find(x=>x.kind==='manufacturing'),b=foundDates.find(x=>x.kind==='best-before');
-      setExpiry(e?.raw??found?.expiry??'');setMfg(m?.raw??found?.production??'');setBest(b?.raw??found?.bestBefore??'');
-      const lines=text.split(/\n+/).map(x=>x.trim()).filter(Boolean);
-      setProductName(lines.find(x=>x.length>2&&!/\b(exp|mfg|manufactur|batch|lot|best before|use by|\d{2,})\b/i.test(x))??'');
-      setBrand(firstTextValue(text,/(?:brand)\s*[:\-]?\s*([^\n]+)/i));
-      setBatch(found?.batch??firstTextValue(text,/(?:batch|lot)\s*(?:no\.?|number)?\s*[:#\-]?\s*([A-Z0-9\-/]+)/i));
-      if(!text)setError('No readable text found. Try a sharper close-up in good light.');
-      else if(!e&&!b&&!found?.expiry&&!found?.bestBefore)setError('Text found, but no labelled expiry or best-before date was identified. Check the package manually.');
-    }catch(error){setError(error instanceof Error ? `Scanning could not complete: ${error.message}` : 'Scanning could not complete. Please try a clearer image.');setCodeStatus('Code check could not complete.');}
-    finally{activeOcrProgress=null;setBusy(false);setProgress('');}
+        throw new Error('For fast, private OCR, open Scan to Safe in the Android app. Browser OCR is not configured in this build.');
+      }));
+
+      const [found, results] = await Promise.all([codeTask, ocrTask]);
+      setCode(found);
+      setCodeStatus(found ? 'A code was decoded. Review its contents below.' : 'No readable barcode or QR code was found in these photos.');
+      const text = results.map(item => item.text).filter(Boolean).join('\n\n--- CLOSE-UP ---\n\n');
+      setRawText(text);
+      setConfidence(null);
+      const foundDates = extractDateCandidates(text);
+      setDates(foundDates);
+      const e = foundDates.find(item => item.kind === 'expiry');
+      const m = foundDates.find(item => item.kind === 'manufacturing');
+      const b = foundDates.find(item => item.kind === 'best-before');
+      setExpiry(e?.raw ?? found?.expiry ?? '');
+      setMfg(m?.raw ?? found?.production ?? '');
+      setBest(b?.raw ?? found?.bestBefore ?? '');
+      const lines = text.split(/\n+/).map(line => line.trim()).filter(Boolean);
+      setProductName(lines.find(line => line.length > 2 && !/\b(exp|mfg|manufactur|batch|lot|best before|use by|\d{2,})\b/i.test(line)) ?? '');
+      setBrand(firstTextValue(text, /(?:brand)\s*[:\-]?\s*([^\n]+)/i));
+      setBatch(found?.batch ?? firstTextValue(text, /(?:batch|lot)\s*(?:no\.?|number)?\s*[:#\-]?\s*([A-Z0-9\-/]+)/i));
+      if (!text) setError('No readable text found. Try a sharper close-up in good light.');
+      else if (!e && !b && !found?.expiry && !found?.bestBefore) setError('Text found, but no labelled expiry or best-before date was identified. Check the package manually.');
+    } catch (error) {
+      setError(error instanceof Error ? `Scanning could not complete: ${error.message}` : 'Scanning could not complete. Please try a clearer image.');
+      setCodeStatus('Code check could not complete.');
+    } finally {
+      setBusy(false);
+      setProgress('');
+    }
   }
 
   const mismatch=Boolean(code?.expiry&&expiry&&code.expiry!==expiry);
