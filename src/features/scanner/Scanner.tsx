@@ -177,7 +177,7 @@ export default function Scanner({onImageSelected}:Props){
       const codeTask = Promise.all(photos.map(photo => readCode(photo.file))).then(decoded => decoded.find(Boolean) ?? null);
       const ocrTask = Promise.all(photos.map(async (photo, index) => {
         setProgress(nativeOcr ? 'Recognising text on this device…' : 'Preparing browser OCR…');
-        const rotations = index === 0 && close ? [0, 90, 270] : [0];
+        const rotations = [0, 90, 270];
         const recognisedTexts: string[] = [];
         const positionedLines: PositionedOcrLine[] = [];
         let browserConfidence = 0;
