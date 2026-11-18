@@ -21,7 +21,8 @@
     "@capacitor/core": "^8.0.0",
     "@capacitor/filesystem": "^8.0.0",
     "@capacitor-mlkit/text-recognition": "^8.2.2",
-    "@capacitor/android": "^8.0.0"
+    "@capacitor/android": "^8.0.0",
+    "@google-cloud/vision": "^5.3.4"
   },
   "devDependencies": {
     "@types/react": "^18.3.18",
