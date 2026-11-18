@@ -1,9 +1,8 @@
-
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// GitHub Pages serves this project from /scan-to-safe-app/.
+// Relative asset paths work both inside the Android WebView and on GitHub Pages.
 export default defineConfig({
-  base: '/scan-to-safe-app/',
+  base: './',
   plugins: [react()],
 });
