@@ -7,7 +7,7 @@ import { BrowserMultiFormatReader } from '@zxing/browser';
 import { createWorker } from 'tesseract.js';
 import type { ImageInputSource } from './types';
 import { extractDateCandidates, firstTextValue } from './dateExtraction';
-import type { DateCandidate } from './dateExtraction';
+import type { DateCandidate, PositionedOcrLine } from './dateExtraction';
 
 interface Props { onImageSelected?: (file: File, source: ImageInputSource) => void; }
 interface Photo { file: File; url: string; }
@@ -179,6 +179,7 @@ export default function Scanner({onImageSelected}:Props){
         setProgress(nativeOcr ? 'Recognising text on this device…' : 'Preparing browser OCR…');
         const rotations = index === 0 && close ? [0, 90, 270] : [0];
         const recognisedTexts: string[] = [];
+        const positionedLines: PositionedOcrLine[] = [];
         let browserConfidence = 0;
         for (const rotation of rotations) {
           const prepared = await prepareImageForOcr(photo.file, rotation);
@@ -189,6 +190,14 @@ export default function Scanner({onImageSelected}:Props){
             try {
               const recognised = await TextRecognition.processImage({ path: stored.uri, script: Script.Latin });
               if (recognised.text.trim()) recognisedTexts.push(recognised.text.trim());
+              if (rotation === 0) {
+                for (const block of recognised.blocks ?? []) {
+                  for (const line of block.lines ?? []) {
+                    const box = line.boundingBox;
+                    if (line.text?.trim() && box) positionedLines.push({ text: line.text.trim(), left: box.left, top: box.top, right: box.right, bottom: box.bottom });
+                  }
+                }
+              }
             } finally {
               await Filesystem.deleteFile({ path: name, directory: Directory.Cache }).catch(() => undefined);
             }
@@ -199,7 +208,7 @@ export default function Scanner({onImageSelected}:Props){
             browserConfidence = Math.max(browserConfidence, Math.round(result.data.confidence));
           }
         }
-        return { text: [...new Set(recognisedTexts)].join('\n'), confidence: nativeOcr ? null as number | null : browserConfidence };
+        return { text: [...new Set(recognisedTexts)].join('\n'), confidence: nativeOcr ? null as number | null : browserConfidence, positionedLines };
       }));
 
       const [found, results] = await Promise.all([codeTask, ocrTask]);
@@ -208,7 +217,8 @@ export default function Scanner({onImageSelected}:Props){
       const text = results.map(item => item.text).filter(Boolean).join('\n\n--- CLOSE-UP ---\n\n');
       setRawText(text);
       setConfidence(null);
-      const foundDates = extractDateCandidates(text);
+      const positionedLines = results.flatMap(item => item.positionedLines);
+      const foundDates = extractDateCandidates(text, positionedLines);
       setDates(foundDates);
       const e = foundDates.find(item => item.kind === 'expiry');
       const m = foundDates.find(item => item.kind === 'manufacturing');
