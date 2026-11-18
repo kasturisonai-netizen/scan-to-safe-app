@@ -194,7 +194,7 @@ export default function Scanner({onImageSelected}:Props){
         }
         if(selected.length){
           const confidence=candidates.slice(0,Math.min(3,candidates.length)).reduce((sum,item)=>sum+item.confidence,0)/Math.min(3,candidates.length);
-          results.push({text:selected.join('\\n--- OCR PASS ---\\n'),confidence});
+          results.push({text:selected.join('\n--- OCR PASS ---\n'),confidence});
         }
       }
       const text=results.map(x=>x.text).filter(Boolean).join('\n\n--- CLOSE-UP ---\n\n');
