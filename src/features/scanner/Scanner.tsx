@@ -143,8 +143,6 @@ async function readCode(file:File):Promise<CodeDetails|null>{
 }
 
 export default function Scanner({onImageSelected}:Props){
-  const fullCamera=useRef<HTMLInputElement>(null), fullGallery=useRef<HTMLInputElement>(null);
-  const closeCamera=useRef<HTMLInputElement>(null), closeGallery=useRef<HTMLInputElement>(null);
   const [full,setFull]=useState<Photo|null>(null),[close,setClose]=useState<Photo|null>(null);
   const [busy,setBusy]=useState(false),[progress,setProgress]=useState(''),[error,setError]=useState('');
   const [rawText,setRawText]=useState(''),[dates,setDates]=useState<DateCandidate[]>([]);
@@ -220,14 +218,19 @@ export default function Scanner({onImageSelected}:Props){
   return <section className="panel">
     <div className="section-title"><span className="step-icon"><ScanText size={20}/></span><div><h2>Scan a product</h2><p>Take a full product photo and an optional close-up of the date. Barcode and QR checks are additional layers.</p></div></div>
     <div className="scan-actions">
-      <button className="choice" onClick={()=>fullCamera.current?.click()} disabled={busy}><Camera size={25}/><b>Full product photo</b><small>Take a picture</small></button>
-      <button className="choice" onClick={()=>fullGallery.current?.click()} disabled={busy}><ImagePlus size={25}/><b>Choose full photo</b><small>From gallery</small></button>
+      <label className="choice file-choice">
+        <input className="file-input-overlay" type="file" accept="image/*" capture="environment" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'camera');e.currentTarget.value='';}}/>
+        <Camera size={25}/><b>Full product photo</b><small>Take a picture</small>
+      </label>
+      <label className="choice file-choice">
+        <input className="file-input-overlay" type="file" accept="image/*" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'gallery');e.currentTarget.value='';}}/>
+        <ImagePlus size={25}/><b>Choose full photo</b><small>From gallery</small>
+      </label>
     </div>
-    <input ref={fullCamera} hidden type="file" accept="image/*" capture="environment" onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'camera');e.currentTarget.value='';}}/>
-    <input ref={fullGallery} hidden type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'gallery');e.currentTarget.value='';}}/>
-    <div className="closeup-row"><div><b>Optional: date-label close-up</b><p>Useful when the printed date is small or unclear.</p></div><div className="closeup-actions"><button type="button" onClick={()=>closeCamera.current?.click()} disabled={busy}>Camera</button><button type="button" onClick={()=>closeGallery.current?.click()} disabled={busy}>Gallery</button></div></div>
-    <input ref={closeCamera} hidden type="file" accept="image/*" capture="environment" onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'camera',true);e.currentTarget.value='';}}/>
-    <input ref={closeGallery} hidden type="file" accept="image/*" onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'gallery',true);e.currentTarget.value='';}}/>
+    <div className="closeup-row"><div><b>Optional: date-label close-up</b><p>Useful when the printed date is small or unclear.</p></div><div className="closeup-actions">
+      <label className="file-action">Camera<input type="file" accept="image/*" capture="environment" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'camera',true);e.currentTarget.value='';}}/></label>
+      <label className="file-action">Gallery<input type="file" accept="image/*" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'gallery',true);e.currentTarget.value='';}}/></label>
+    </div></div>
     <div className="photo-previews">{full&&<div className="preview-wrap"><img src={full.url} alt="Full product"/><div><b>Full product photo</b><p>{full.file.name||'Camera photo'}</p></div></div>}{close&&<div className="preview-wrap"><img src={close.url} alt="Date label close-up"/><div><b>Date-label close-up</b><p>{close.file.name||'Camera photo'}</p></div></div>}</div>
     <button className="primary scan-submit" onClick={()=>void scan()} disabled={busy||!full}><ScanText size={17}/>{busy?'Scanning…':'Read dates and scan codes'}</button>
     {busy&&<div className="notice"><RefreshCw size={16} className="spin"/> {progress||'Scanning…'} Keep this page open.</div>}
