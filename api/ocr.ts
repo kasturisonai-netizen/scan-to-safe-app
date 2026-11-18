@@ -46,13 +46,13 @@ export default async function handler(req: any, res: any) {
     if (!imageBase64 || !/^image\/(jpeg|png|webp)$/i.test(mimeType)) {
       return res.status(400).json({ error: 'A JPEG, PNG or WebP image is required.' });
     }
-    if (imageBase64.length > 5_500_000) {
+    if (imageBase64.length > 4_100_000) {
       return res.status(413).json({ error: 'Image is too large. Please choose a smaller photo.' });
     }
 
     const imageBytes = Buffer.from(imageBase64, 'base64');
-    if (!imageBytes.length || imageBytes.length > 4 * 1024 * 1024) {
-      return res.status(413).json({ error: 'Image must be 4 MB or smaller after compression.' });
+    if (!imageBytes.length || imageBytes.length > 3 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Image must be 3 MB or smaller after compression.' });
     }
 
     const client = getVisionClient();
