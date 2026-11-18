@@ -27,16 +27,16 @@ function isPlausibleDate(raw:string):boolean {
 }
 
 function classify(context:string):DateKind {
-  // Normalise OCR punctuation/spacing, then look for common packaging labels.
-  // Keep manufacturing and best-before checks separate from expiry wording.
   const s=context.toLowerCase()
     .replace(/[.:]/g,' ')
     .replace(/[|]/g,' ')
     .replace(/\\s+/g,' ')
     .trim();
 
-  const bestBefore = /\\b(?:best\\s*before(?:\\s*end)?|b\\s*\\.?b\\s*\\.?e\\.?|bbe|bb\\s*date|use\\s*within|consume\\s*within|consume\\s*before)\\b/;
-  const expiry = /\\b(?:expiry|expires?|expiration|expir(?:y|ation)\\s*(?:date|dt)|exp\\s*date|exp\\.?|use\\s*by|use\\s*before|consume\\s*by|not\\s*to\\s*be\\s*used\\s*after|do\\s*not\\s*use\\s*after|valid\\s*(?:until|till|upto|up\\s*to)|validity\\s*(?:date|period)|date\\s*of\\s*(?:expiry|expiration)|discard\\s*after)\\b/;
+  // Indian food, cosmetic and general packaged-goods label vocabulary.
+  // Avoid treating "shelf life" alone as an absolute expiry date: it is a duration.
+  const bestBefore = /\\b(?:best\\s*before(?:\\s*end)?|best\\s*before\\s*(?:upto|up\\s*to|within)|b\\s*\\.?b\\s*\\.?e\\.?|bbe|bbd|bb\\s*date|use\\s*within|consume\\s*within|consume\\s*before|recommended\\s*last\\s*consumption\\s*date)\\b/;
+  const expiry = /\\b(?:expiry|expires?|expiration|expir(?:y|ation)\\s*(?:date|dt)|exp\\s*(?:date|dt)|exp\\.?|use\\s*by|use\\s*before|use\\s*upto|use\\s*up\\s*to|consume\\s*by|recommended\\s*last\\s*consumption(?:\\s*date)?|last\\s*date\\s*of\\s*use|not\\s*to\\s*be\\s*used\\s*after|do\\s*not\\s*use\\s*after|valid\\s*(?:until|till|upto|up\\s*to)|validity\\s*(?:date|upto|up\\s*to)|date\\s*of\\s*(?:expiry|expiration)|discard\\s*after)\\b/;
   const manufacturing = /\\b(?:mfg|mfd|manufactured|manufacturing|manufacture|date\\s*of\\s*manufacture|dom|production\\s*date|prod\\.?\\s*date|packed\\s*on|packing\\s*date|pkg\\.?\\s*date|pkd|date\\s*of\\s*packing)\\b/;
 
   if (bestBefore.test(s)) return 'best-before';
