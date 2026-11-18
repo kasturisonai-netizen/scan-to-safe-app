@@ -5,7 +5,7 @@ type OcrRequest = {
   mimeType?: string;
 };
 
-let visionClient: InstanceType<typeof vision.ImageAnnotatorClient> | undefined;
+let visionClient: any;
 
 function getVisionClient() {
   if (visionClient) return visionClient;
@@ -41,9 +41,9 @@ export default async function handler(req: any, res: any) {
 
   try {
     const body = (req.body || {}) as OcrRequest;
-    const imageBase64 = body.imageBase64?.replace(/^data:image\\/[^;]+;base64,/, '');
+    const imageBase64 = body.imageBase64?.replace(/^data:image\/[^;]+;base64,/, '');
     const mimeType = body.mimeType || 'image/jpeg';
-    if (!imageBase64 || !/^image\\/(jpeg|png|webp)$/i.test(mimeType)) {
+    if (!imageBase64 || !/^image\/(jpeg|png|webp)$/i.test(mimeType)) {
       return res.status(400).json({ error: 'A JPEG, PNG or WebP image is required.' });
     }
     if (imageBase64.length > 5_500_000) {
