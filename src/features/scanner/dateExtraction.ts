@@ -10,19 +10,19 @@ const DATE_PATTERNS = [
 ];
 
 function isPlausibleDate(raw:string):boolean {
-  const numeric = raw.match(/^(\\d{1,2})[/.\\-](\\d{1,2})[/.\\-](\\d{2}|20\\d{2})$/);
+  const numeric = raw.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2}|20\d{2})$/);
   if (numeric) {
     const day=Number(numeric[1]), month=Number(numeric[2]), year=Number(numeric[3].length===2?'20'+numeric[3]:numeric[3]);
     const maxDay=new Date(year,month,0).getDate();
     return month>=1 && month<=12 && day>=1 && day<=maxDay;
   }
-  const yearFirst=raw.match(/^(20\\d{2})[/.\\-](\\d{1,2})[/.\\-](\\d{1,2})$/);
+  const yearFirst=raw.match(/^(20\d{2})[/.\-](\d{1,2})[/.\-](\d{1,2})$/);
   if (yearFirst) {
     const year=Number(yearFirst[1]), month=Number(yearFirst[2]), day=Number(yearFirst[3]);
     return month>=1 && month<=12 && day>=1 && day<=new Date(year,month,0).getDate();
   }
   // Month/year forms must contain a two-digit month; fragments such as 5-23 are not dates.
-  return /^(?:0[1-9]|1[0-2])[/.\\-](?:20)?\\d{2}$/.test(raw) || /^(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\\s*(?:20)?\\d{2}$/i.test(raw);
+  return /^(?:0[1-9]|1[0-2])[/.\-](?:20)?\d{2}$/.test(raw) || /^(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s*(?:20)?\d{2}$/i.test(raw);
 }
 
 function classify(context:string):DateKind {
@@ -40,10 +40,10 @@ export function extractDateCandidates(text:string):DateCandidate[] {
     for(const match of text.matchAll(pattern)){
       const raw=match[0],index=match.index??0;
       if (!isPlausibleDate(raw)) continue;
-      const lines=text.split(/\\r?\\n/);
+      const lines=text.split(/\r?\n/);
       let offset=0, lineIndex=0;
       for(let i=0;i<lines.length;i++){if(index<=offset+lines[i].length){lineIndex=i;break;}offset+=lines[i].length+1;}
-      const context=[lines[lineIndex-1]??'',lines[lineIndex]??'',lines[lineIndex+1]??''].join(' ').replace(/\\s+/g,' ').trim().slice(0,220);
+      const context=[lines[lineIndex-1]??'',lines[lineIndex]??'',lines[lineIndex+1]??''].join(' ').replace(/\s+/g,' ').trim().slice(0,220);
       const key=raw.toLowerCase();
       if(!seen.has(key)){seen.add(key);found.push({raw,context,kind:classify(context)});}
     }
