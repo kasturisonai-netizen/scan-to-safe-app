@@ -13,6 +13,46 @@ interface Props { onImageSelected?: (file: File, source: ImageInputSource) => vo
 interface Photo { file: File; url: string; }
 interface CodeDetails { text: string; format: string; gtin?: string; batch?: string; expiry?: string; bestBefore?: string; production?: string; serial?: string; }
 
+const CLOUD_OCR_ENDPOINT = import.meta.env.VITE_OCR_API_URL || '';
+
+async function compressForCloudOcr(file: File): Promise<string> {
+  const image = await loadImage(file);
+  const scale = Math.min(1, 2000 / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Image processing is unavailable on this device.');
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(value => value ? resolve(value) : reject(new Error('Could not prepare photo for cloud OCR.')), 'image/jpeg', 0.86)
+  );
+  if (blob.size > 4 * 1024 * 1024) throw new Error('Photo is too large to send. Choose a smaller image.');
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read the prepared photo.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function readWithCloudVision(file: File): Promise<{text:string;confidence:number|null}> {
+  if (!CLOUD_OCR_ENDPOINT) {
+    throw new Error('Cloud OCR is not connected yet. The secure OCR service still needs to be deployed and configured.');
+  }
+  const imageBase64 = await compressForCloudOcr(file);
+  const response = await fetch(CLOUD_OCR_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageBase64, mimeType: 'image/jpeg' }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Cloud OCR request failed.');
+  return { text: String(payload.text || '').trim(), confidence: typeof payload.confidence === 'number' ? payload.confidence : null };
+}
+
 // Keep the browser OCR worker warm between scans; worker startup is expensive on mobile.
 let browserWorkerPromise: ReturnType<typeof createWorker> | null = null;
 let activeOcrProgress: ((message: string) => void) | null = null;
@@ -249,8 +289,7 @@ export default function Scanner({onImageSelected}:Props){
       const found=decoded.find(Boolean)??null;setCode(found);
       setCodeStatus(found?'A code was decoded. Review its contents below.':'No readable barcode or QR code was found in these photos.');
       const nativeOcr=Capacitor.isNativePlatform();
-      setOcrEngine(nativeOcr?'Google ML Kit (on-device)':'Tesseract (browser)');
-      if(!nativeOcr) worker=await getBrowserOcrWorker();
+      setOcrEngine(nativeOcr?'Google ML Kit (on-device)':'Google Cloud Vision');
       const results:{text:string;confidence:number|null}[]=[];
       for(let i=0;i<photos.length;i++){
         const isClosePhoto=Boolean(close)&&photos[i]===close;
@@ -263,42 +302,13 @@ export default function Scanner({onImageSelected}:Props){
             const recognised=await TextRecognition.processImage({path:stored.uri,script:Script.Latin});
             if(recognised.text.trim()) results.push({text:recognised.text.trim(),confidence:null});
           } finally { await Filesystem.deleteFile({path:name,directory:Directory.Cache}).catch(()=>undefined); }
-          continue;
-        }
-        if(i>0 && results.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
-        setProgress(isClosePhoto?'Preparing date-label close-up…':'Preparing product photo…');
-        const variants=await makeOcrVariants(photos[i].file);
-        // Start with upright images. Only pay for rotated passes when the first readings
-        // fail to identify an expiry/best-before label (common on mobile product photos).
-        // Product date panels are frequently photographed sideways or upside down.
-        // Try all four orientations; close-up variants come first, then full-frame fallbacks.
-        const attempts=variants.flatMap(variant=>[0,90,180,270].map(angle=>rotateCanvas(variant,angle)));
-        if(!worker) throw new Error('Browser OCR worker is unavailable');
-        const candidates:{text:string;confidence:number;score:number}[]=[];
-        for(let j=0;j<attempts.length;j++){
-          if(j>=4 && candidates.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
-          setProgress('Reading ' + (isClosePhoto?'date close-up':'product photo') + '… pass ' + (j+1) + '/' + attempts.length);
-          const result=await worker.recognize(attempts[j]);
-          const text=result.data.text.trim();
-          if(text) candidates.push({text,confidence:result.data.confidence,score:ocrScore(text,result.data.confidence)});
-        }
-        // Keep several complementary readings: one pass may catch the date while another catches its label.
-        const selected:string[]=[];
-        const seen=new Set<string>();
-        candidates.sort((a,b)=>b.score-a.score);
-        for(const candidate of candidates){
-          const key=candidate.text.toLowerCase().replace(/[^a-z0-9]/g,'');
-          if(key.length<3||seen.has(key)) continue;
-          seen.add(key); selected.push(candidate.text);
-          if(selected.length===2) break;
-        }
-        if(selected.length){
-          const confidence=candidates.slice(0,Math.min(3,candidates.length)).reduce((sum,item)=>sum+item.confidence,0)/Math.min(3,candidates.length);
-          results.push({text:selected.join('\n--- OCR PASS ---\n'),confidence});
+        } else {
+          setProgress(isClosePhoto?'Sending date-label close-up securely for OCR…':'Sending product photo securely for OCR…');
+          results.push(await readWithCloudVision(photos[i].file));
         }
       }
       const text=results.map(x=>x.text).filter(Boolean).join('\n\n--- CLOSE-UP ---\n\n');
-      setRawText(text);const scored=results.filter((item):item is {text:string;confidence:number}=>item.confidence!==null);setConfidence(scored.length?Math.round(scored.reduce((a,b)=>a+b.confidence,0)/scored.length):null);
+      setRawText(text);const scored=results.filter((item):item is {text:string;confidence:number}=>item.confidence!==null);setConfidence(scored.length?Math.round(scored.reduce((a,b)=>a+b.confidence,0)/scored.length):(results.find(x=>x.confidence!==null)?.confidence??null));
       const foundDates=extractDateCandidates(text);setDates(foundDates);
       const e=foundDates.find(x=>x.kind==='expiry'),m=foundDates.find(x=>x.kind==='manufacturing'),b=foundDates.find(x=>x.kind==='best-before');
       setExpiry(e?.raw??found?.expiry??'');setMfg(m?.raw??found?.production??'');setBest(b?.raw??found?.bestBefore??'');
