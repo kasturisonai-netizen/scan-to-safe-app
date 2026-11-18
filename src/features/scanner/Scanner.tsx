@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Script, TextRecognition } from '@capacitor-mlkit/text-recognition';
 import { BrowserMultiFormatReader } from '@zxing/browser';
+import { createWorker } from 'tesseract.js';
 import type { ImageInputSource } from './types';
 import { extractDateCandidates, firstTextValue } from './dateExtraction';
 import type { DateCandidate } from './dateExtraction';
@@ -11,6 +12,20 @@ import type { DateCandidate } from './dateExtraction';
 interface Props { onImageSelected?: (file: File, source: ImageInputSource) => void; }
 interface Photo { file: File; url: string; }
 interface CodeDetails { text: string; format: string; gtin?: string; batch?: string; expiry?: string; bestBefore?: string; production?: string; serial?: string; }
+
+let browserOcrWorkerPromise: ReturnType<typeof createWorker> | null = null;
+async function getBrowserOcrWorker() {
+  if (!browserOcrWorkerPromise) {
+    browserOcrWorkerPromise = createWorker('eng', 1, {
+      logger: message => {
+        if (message.status === 'recognizing text') {
+          // The first browser scan also downloads the OCR model; later scans reuse this worker.
+        }
+      },
+    });
+  }
+  return browserOcrWorkerPromise;
+}
 
 async function prepareImageForOcr(file: File): Promise<File> {
   const image = await loadImage(file);
@@ -151,7 +166,7 @@ export default function Scanner({onImageSelected}:Props){
     try {
       const photos = [...(close ? [close] : []), ...(full ? [full] : [])];
       const nativeOcr = Capacitor.isNativePlatform();
-      setOcrEngine(nativeOcr ? 'Google ML Kit (on-device)' : 'Tesseract.js browser fallback');
+      setOcrEngine(nativeOcr ? 'Google ML Kit (on-device)' : 'Tesseract.js (browser, one pass)');
 
       // Run barcode/QR decoding alongside OCR instead of making the user wait for them sequentially.
       const codeTask = Promise.all(photos.map(photo => readCode(photo.file))).then(decoded => decoded.find(Boolean) ?? null);
@@ -169,7 +184,9 @@ export default function Scanner({onImageSelected}:Props){
             await Filesystem.deleteFile({ path: name, directory: Directory.Cache }).catch(() => undefined);
           }
         }
-        throw new Error('For fast, private OCR, open Scan to Safe in the Android app. Browser OCR is not configured in this build.');
+        const worker = await getBrowserOcrWorker();
+        const result = await worker.recognize(prepared);
+        return { text: result.data.text.trim(), confidence: Math.round(result.data.confidence) };
       }));
 
       const [found, results] = await Promise.all([codeTask, ocrTask]);
@@ -226,7 +243,7 @@ export default function Scanner({onImageSelected}:Props){
     {error&&<div className="scan-warning"><AlertTriangle size={17}/><span>{error}</span></div>}
     {(rawText||code)&&!busy&&<div className="ocr-results">
       <div className="result-heading"><CheckCircle2 size={18}/><b>Scan results — verify before saving</b></div>
-      <p className="confidence">{ocrEngine==='Google ML Kit (on-device)'?'Google ML Kit on-device recognition. No comparable confidence score is provided.':'OCR confidence: '+(confidence??0)+'% (text recognition confidence, not date correctness).'}</p>
+      <p className="confidence">{ocrEngine==='Google ML Kit (on-device)'?'Google ML Kit on-device recognition. No comparable confidence score is provided.':'Browser OCR confidence: '+(confidence??0)+'% (text recognition confidence, not date correctness).'}</p>
       <div className="code-panel"><div className="result-heading"><QrCode size={18}/><b>Barcode / QR result</b></div><p>{codeStatus}</p>{code&&<><pre className="raw-ocr">{code.format}: {code.text}</pre><dl className="code-fields">{code.gtin&&<div><dt>GTIN</dt><dd>{code.gtin}</dd></div>}{code.batch&&<div><dt>Encoded batch</dt><dd>{code.batch}</dd></div>}{code.expiry&&<div><dt>Encoded expiry (AI 17)</dt><dd>{code.expiry}</dd></div>}{code.bestBefore&&<div><dt>Encoded best-before (AI 15)</dt><dd>{code.bestBefore}</dd></div>}{code.production&&<div><dt>Encoded production date (AI 11)</dt><dd>{code.production}</dd></div>}{code.serial&&<div><dt>Serial number</dt><dd>{code.serial}</dd></div>}</dl><p className="muted">Many ordinary barcodes contain only a product identifier. A decoded code does not prove authenticity.</p></>}</div>
       {mismatch&&<div className="scan-warning"><AlertTriangle size={17}/><span>Printed expiry and encoded expiry differ. This needs manual checking; it does not prove tampering.</span></div>}
       <h3>Possible dates found</h3>{dates.length?<div className="candidate-list">{dates.map((d,i)=><button type="button" className="candidate" key={d.raw+i} onClick={()=>applyDate(d)}><b>{d.raw}</b><span>{d.kind}</span><small>{d.context}</small></button>)}</div>:<p className="muted">No date-like text was detected.</p>}
