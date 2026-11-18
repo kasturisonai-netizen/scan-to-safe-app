@@ -34,7 +34,6 @@ async function prepareImageForOcr(file: File, rotation = 0): Promise<File> {
   const sourceWidth = rotated ? image.naturalHeight : image.naturalWidth;
   const sourceHeight = rotated ? image.naturalWidth : image.naturalHeight;
   const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
-  if (rotation === 0 && scale === 1 && file.size <= 2_500_000) return file;
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sourceWidth * scale));
   canvas.height = Math.max(1, Math.round(sourceHeight * scale));
