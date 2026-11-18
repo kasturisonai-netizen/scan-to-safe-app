@@ -1,21 +1,35 @@
-SCAN TO SAFE — OCR UPDATE FILES
+# Scan to Safe
 
-This is an incremental update for the existing GitHub repository.
-It adds browser-based English OCR using Tesseract.js and a review screen for possible date fields.
+A mobile-first product safety inventory app. Scan packaging photos to extract printed manufacturing and expiry-related dates, review the OCR results, and save confirmed products to a private personal inventory.
 
-Files to replace/add in the GitHub repository:
-- Replace package.json
-- Replace src/App.tsx
-- Replace src/styles.css
-- Replace src/features/scanner/Scanner.tsx
-- Replace src/features/scanner/types.ts
-- Add src/features/scanner/dateExtraction.ts
+## Project status
+The **scan-to-safe-v2** branch is the clean rebuild track. The existing main branch has been left unchanged.
 
-After uploading, GitHub Actions should build automatically. Do not manually run the workflow if a run has already started.
+## Planned features
+- Email sign-up, sign-in and sign-out
+- Camera capture and gallery upload
+- OCR of printed packaging text
+- Detection of MFG/MFD, EXP, Use By and Best Before dates
+- Review and correction of OCR suggestions before saving
+- Separate Medicine and General Products inventories
+- Persistent per-user database storage
+- Edit, delete, search and expiry status indicators
+- In-app expiry alerts
+- Capacitor-ready Android packaging
 
-Important:
-- The first OCR run downloads the OCR language data and needs an internet connection.
-- OCR is English-only in this first pass.
-- Dates are suggestions only. The app does not determine or guarantee the correct expiry date.
-- This update does not yet save products to the inventory or create reminders.
-- No barcode scanning is included.
+## Stack
+React, TypeScript, Vite, Supabase Auth/Postgres/Storage, Tesseract.js and Capacitor.
+
+## Setup
+1. Create a Supabase project.
+2. Copy `.env.example` to `.env` and fill in the Supabase project URL and anon key.
+3. Run `supabase/migrations/202611190001_initial_schema.sql` in the Supabase SQL editor.
+4. Install dependencies with `npm install`.
+5. Start the app with `npm run dev`.
+
+Never put a Supabase service-role key in frontend environment variables.
+
+## Product safety
+OCR results are suggestions, not a safety certification. Users must verify printed dates before saving. Ambiguous date formats must be flagged rather than silently guessed.
+
+See [PROJECT_SPEC.md](PROJECT_SPEC.md) for the complete product requirements and acceptance tests.
