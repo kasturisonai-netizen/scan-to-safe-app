@@ -50,7 +50,7 @@ function classifyNearestLabel(text:string,dateIndex:number):DateKind {
   const labelPatterns: Array<{kind:DateKind; pattern:RegExp}> = [
     {kind:'manufacturing',pattern:/\b(?:mfg(?:\.|\s)*(?:date|dt|dte|on|month|year)?|mfd(?:\.|\s)*(?:date|dt|dte|on|month|year)?|mfgd|mfdg|mfr(?:\.|\s)*(?:date|dt|on)?|manuf(?:\.|\s)*(?:date|dt|on)?|manufacture(?:d|ing)?(?:\s*(?:date|dt|on))?|date\s*(?:of\s*)?(?:mfg|mfd|mfr|manufacture|manufacturing|manufactured)|dom|production\s*(?:date|dt|on)|prod\.?\s*(?:date|dt|on)?|prd\.?\s*(?:date|dt|on)?|date\s*of\s*production|packed\s*(?:on|date)|packing\s*(?:date|dt|on)|pkg\.?\s*(?:date|dt|on)?|pkd(?:\.|\s)*(?:on|date|dt)?|pckd(?:\.|\s)*(?:on|date|dt)?|date\s*of\s*packing|date\s*packed|mfg\s*month|manufacturing\s*month)\b/gi,
     {kind:'best-before',pattern:/\b(?:best\s*before(?:\s*end)?|bbe|bbd|bb\s*date|use\s*within|consume\s*within|consume\s*before)\b/gi},
-    {kind:'expiry',pattern:/\b(?:expiry|expires?|expiration|exp\.?\s*(?:date|dt|on)?|e\.?\s*d\.?|use\s*by|use\s*before|sell\s*by|sell\s*before|consume\s*by|valid\s*(?:until|till|upto|up\s*to)|discard\s*after|do\s*not\s*use\s*after)\b/gi}
+    {kind:'expiry',pattern:/\b(?:expiry|expires?|expiration|exp\.?\s*(?:date|dt|on)?|e\.?\s*d\.?|use\s*by|use\s*before|sell\s*by|sell\s*before|consume\s*by|valid\s*(?:until|till|upto|up\s*to)|discard\s*after|do\s*not\s*use\s*after)\b/gi},
   ];
   const labels:Array<{kind:DateKind;index:number;end:number}>=[];
   for(const item of labelPatterns){
