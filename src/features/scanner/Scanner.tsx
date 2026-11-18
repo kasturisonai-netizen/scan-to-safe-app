@@ -13,6 +13,20 @@ interface Props { onImageSelected?: (file: File, source: ImageInputSource) => vo
 interface Photo { file: File; url: string; }
 interface CodeDetails { text: string; format: string; gtin?: string; batch?: string; expiry?: string; bestBefore?: string; production?: string; serial?: string; }
 
+// Keep the browser OCR worker warm between scans; worker startup is expensive on mobile.
+let browserWorkerPromise: ReturnType<typeof createWorker> | null = null;
+let activeOcrProgress: ((message: string) => void) | null = null;
+async function getBrowserOcrWorker() {
+  if (!browserWorkerPromise) {
+    browserWorkerPromise = createWorker('eng', 1, {
+      logger: message => {
+        if (message.status === 'recognizing text') activeOcrProgress?.(`Reading label… ${Math.round((message.progress ?? 0) * 100)}%`);
+      },
+    }).catch(error => { browserWorkerPromise = null; throw error; });
+  }
+  return browserWorkerPromise;
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -181,6 +195,7 @@ export default function Scanner({onImageSelected}:Props){
     if(!full&&!close){setError('Add a product photo or a date-label close-up first.');return;}
     setBusy(true);setError('');setRawText('');setDates([]);setCode(null);setConfidence(null);setCodeStatus('Checking barcode and QR…');
     let worker:Awaited<ReturnType<typeof createWorker>>|undefined;
+    activeOcrProgress = setProgress;
     try{
       const photos=[...(close?[close]:[]),...(full?[full]:[])];
       const decoded=await Promise.all(photos.map(photo=>readCode(photo.file)));
@@ -188,7 +203,7 @@ export default function Scanner({onImageSelected}:Props){
       setCodeStatus(found?'A code was decoded. Review its contents below.':'No readable barcode or QR code was found in these photos.');
       const nativeOcr=Capacitor.isNativePlatform();
       setOcrEngine(nativeOcr?'Google ML Kit (on-device)':'Tesseract (browser)');
-      if(!nativeOcr) worker=await createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text')setProgress(`Reading label… ${Math.round((m.progress??0)*100)}%`);}});
+      if(!nativeOcr) worker=await getBrowserOcrWorker();
       const results:{text:string;confidence:number|null}[]=[];
       for(let i=0;i<photos.length;i++){
         const isClosePhoto=Boolean(close)&&photos[i]===close;
@@ -206,10 +221,15 @@ export default function Scanner({onImageSelected}:Props){
         if(i>0 && results.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
         setProgress(isClosePhoto?'Preparing date-label close-up…':'Preparing product photo…');
         const variants=await makeOcrVariants(photos[i].file);
-        const attempts=variants.flatMap(variant=>[0,90].map(angle=>rotateCanvas(variant,angle)));
+        // Start with upright images. Only pay for rotated passes when the first readings
+        // fail to identify an expiry/best-before label (common on mobile product photos).
+        const upright=variants.map(variant=>rotateCanvas(variant,0));
+        const rotated=variants.map(variant=>rotateCanvas(variant,90));
+        const attempts=[...upright,...rotated];
         if(!worker) throw new Error('Browser OCR worker is unavailable');
         const candidates:{text:string;confidence:number;score:number}[]=[];
         for(let j=0;j<attempts.length;j++){
+          if(j===2 && candidates.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
           setProgress('Reading ' + (isClosePhoto?'date close-up':'product photo') + '… pass ' + (j+1) + '/' + attempts.length);
           const result=await worker.recognize(attempts[j]);
           const text=result.data.text.trim();
@@ -241,8 +261,8 @@ export default function Scanner({onImageSelected}:Props){
       setBatch(found?.batch??firstTextValue(text,/(?:batch|lot)\s*(?:no\.?|number)?\s*[:#\-]?\s*([A-Z0-9\-/]+)/i));
       if(!text)setError('No readable text found. Try a sharper close-up in good light.');
       else if(!e&&!b&&!found?.expiry&&!found?.bestBefore)setError('Text found, but no labelled expiry or best-before date was identified. Check the package manually.');
-    }catch{setError('Scanning could not complete. Check your internet connection and try again.');setCodeStatus('Code check could not complete.');}
-    finally{if(worker)await worker.terminate();setBusy(false);setProgress('');}
+    }catch(error){setError(error instanceof Error ? `Scanning could not complete: ${error.message}` : 'Scanning could not complete. Please try a clearer image.');setCodeStatus('Code check could not complete.');}
+    finally{activeOcrProgress=null;setBusy(false);setProgress('');}
   }
 
   const mismatch=Boolean(code?.expiry&&expiry&&code.expiry!==expiry);
