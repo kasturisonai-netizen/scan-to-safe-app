@@ -37,7 +37,7 @@ function classify(context:string):DateKind {
   // Keep "best before" distinct from strict expiry/use-by language.
   const bestBefore = /\b(?:best\s*before(?:\s*end)?|best\s*before\s*(?:upto|up\s*to|within)|b\s*\.?\s*b\s*\.?\s*e\.?|bbe|bbd|bb\s*date|use\s*within|consume\s*within|consume\s*before|recommended\s*last\s*consumption(?:\s*date)?|last\s*date\s*of\s*consumption)\b/;
   const expiry = /\b(?:expiry|expires?|expiration|expir(?:y|ation)\s*(?:date|dt|on)?|exp\s*(?:date|dt|on)|exp\.?|e\.?\s*d\.?|use\s*by|use\s*before|use\s*upto|use\s*up\s*to|consume\s*by|consume\s*before\s*date|not\s*to\s*be\s*used\s*after|do\s*not\s*use\s*after|valid\s*(?:until|till|upto|up\s*to)|validity\s*(?:date|upto|up\s*to)|date\s*of\s*(?:expiry|expiration)|expiry\s*month|discard\s*after|do\s*not\s*consume\s*after|not\s*for\s*use\s*after)\b/;
-  const manufacturing = /\b(?:mfg|mfd|manuf(?:acture|actured|acturing)?|manufactured\s*on|manufacturing\s*date|date\s*of\s*manufacture|mfg\s*(?:date|dt|on)|mfd\s*(?:date|dt|on)|dom|date\s*of\s*manufacture|production\s*date|prod\.?\s*(?:date|dt)|packed\s*on|packing\s*date|pkg\.?\s*(?:date|dt)|pkd|date\s*of\s*packing|date\s*packed)\b/;
+  const manufacturing = /\b(?:mfg(?:\.|\s)*(?:date|dt|dte|on|month|year)?|mfd(?:\.|\s)*(?:date|dt|dte|on|month|year)?|mfgd|mfdg|mfr(?:\.|\s)*(?:date|dt|on)?|manuf(?:\.|\s)*(?:date|dt|on)?|manufacture(?:d|ing)?(?:\s*(?:date|dt|on))?|date\s*(?:of\s*)?(?:mfg|mfd|mfr|manufacture|manufacturing|manufactured)|dom|production\s*(?:date|dt|on)|prod\.?\s*(?:date|dt|on)?|prd\.?\s*(?:date|dt|on)?|date\s*of\s*production|packed\s*(?:on|date)|packing\s*(?:date|dt|on)|pkg\.?\s*(?:date|dt|on)?|pkd(?:\.|\s)*(?:on|date|dt)?|pckd(?:\.|\s)*(?:on|date|dt)?|date\s*of\s*packing|date\s*packed|mfg\s*month|manufacturing\s*month)\b/;
 
   if (bestBefore.test(s)) return 'best-before';
   if (expiry.test(s)) return 'expiry';
@@ -48,7 +48,7 @@ function classify(context:string):DateKind {
 
 function classifyNearestLabel(text:string,dateIndex:number):DateKind {
   const labelPatterns: Array<{kind:DateKind; pattern:RegExp}> = [
-    {kind:'manufacturing',pattern:/\b(?:mfg\.?\s*(?:date|dt|on)?|mfd\.?\s*(?:date|dt|on)?|manufactur(?:e|ed|ing)(?:\s*date)?|date\s*of\s*manufacture|dom|prod\.?\s*(?:date|dt)|production\s*date|pkd|pkg\.?\s*(?:date|dt)|packed\s*on|packing\s*date|date\s*packed)\b/gi},
+    {kind:'manufacturing',pattern:/\b(?:mfg(?:\.|\s)*(?:date|dt|dte|on|month|year)?|mfd(?:\.|\s)*(?:date|dt|dte|on|month|year)?|mfgd|mfdg|mfr(?:\.|\s)*(?:date|dt|on)?|manuf(?:\.|\s)*(?:date|dt|on)?|manufacture(?:d|ing)?(?:\s*(?:date|dt|on))?|date\s*(?:of\s*)?(?:mfg|mfd|mfr|manufacture|manufacturing|manufactured)|dom|production\s*(?:date|dt|on)|prod\.?\s*(?:date|dt|on)?|prd\.?\s*(?:date|dt|on)?|date\s*of\s*production|packed\s*(?:on|date)|packing\s*(?:date|dt|on)|pkg\.?\s*(?:date|dt|on)?|pkd(?:\.|\s)*(?:on|date|dt)?|pckd(?:\.|\s)*(?:on|date|dt)?|date\s*of\s*packing|date\s*packed|mfg\s*month|manufacturing\s*month)\b/gi,
     {kind:'best-before',pattern:/\b(?:best\s*before(?:\s*end)?|bbe|bbd|bb\s*date|use\s*within|consume\s*within|consume\s*before)\b/gi},
     {kind:'expiry',pattern:/\b(?:expiry|expires?|expiration|exp\.?\s*(?:date|dt|on)?|e\.?\s*d\.?|use\s*by|use\s*before|sell\s*by|sell\s*before|consume\s*by|valid\s*(?:until|till|upto|up\s*to)|discard\s*after|do\s*not\s*use\s*after)\b/gi}
   ];
