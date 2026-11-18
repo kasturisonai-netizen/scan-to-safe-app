@@ -165,19 +165,21 @@ export default function Scanner({onImageSelected}:Props){
     setBusy(true);setError('');setRawText('');setDates([]);setCode(null);setConfidence(null);setCodeStatus('Checking barcode and QR…');
     let worker:Awaited<ReturnType<typeof createWorker>>|undefined;
     try{
-      const photos=[...(full?[full]:[]),...(close?[close]:[])];
+      const photos=[...(close?[close]:[]),...(full?[full]:[])];
       const decoded=await Promise.all(photos.map(photo=>readCode(photo.file)));
       const found=decoded.find(Boolean)??null;setCode(found);
       setCodeStatus(found?'A code was decoded. Review its contents below.':'No readable barcode or QR code was found in these photos.');
       worker=await createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text')setProgress(`Reading label… ${Math.round((m.progress??0)*100)}%`);}});
       const results:{text:string;confidence:number}[]=[];
       for(let i=0;i<photos.length;i++){
-        setProgress((full&&i===0)?'Preparing product photo…':'Preparing date-label close-up…');
+        const isClosePhoto=Boolean(close)&&photos[i]===close;
+        if(i>0 && results.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
+        setProgress(isClosePhoto?'Preparing date-label close-up…':'Preparing product photo…');
         const variants=await makeOcrVariants(photos[i].file);
-        const attempts=variants.flatMap(variant=>[0,90,180,270].map(angle=>rotateCanvas(variant,angle)));
+        const attempts=variants.flatMap(variant=>[0,90].map(angle=>rotateCanvas(variant,angle)));
         const candidates:{text:string;confidence:number;score:number}[]=[];
         for(let j=0;j<attempts.length;j++){
-          setProgress('Reading ' + ((full&&i===0)?'product photo':'date close-up') + '… pass ' + (j+1) + '/' + attempts.length);
+          setProgress('Reading ' + (isClosePhoto?'date close-up':'product photo') + '… pass ' + (j+1) + '/' + attempts.length);
           const result=await worker.recognize(attempts[j]);
           const text=result.data.text.trim();
           if(text) candidates.push({text,confidence:result.data.confidence,score:ocrScore(text,result.data.confidence)});
