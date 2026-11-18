@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Camera, ImagePlus, ScanText, RefreshCw, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react';
+import { Camera, ImagePlus, ScanText, RefreshCw, AlertTriangle, CheckCircle2, QrCode, X } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Script, TextRecognition } from '@capacitor-mlkit/text-recognition';
@@ -27,23 +27,29 @@ async function getBrowserOcrWorker() {
   return browserOcrWorkerPromise;
 }
 
-async function prepareImageForOcr(file: File): Promise<File> {
+async function prepareImageForOcr(file: File, rotation = 0): Promise<File> {
   const image = await loadImage(file);
   const maxSide = 1800;
-  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
-  if (scale === 1 && file.size <= 2_500_000) return file;
+  const rotated = rotation % 180 !== 0;
+  const sourceWidth = rotated ? image.naturalHeight : image.naturalWidth;
+  const sourceHeight = rotated ? image.naturalWidth : image.naturalHeight;
+  const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+  if (rotation === 0 && scale === 1 && file.size <= 2_500_000) return file;
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+  canvas.height = Math.max(1, Math.round(sourceHeight * scale));
   const context = canvas.getContext('2d');
   if (!context) return file;
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  context.translate(canvas.width / 2, canvas.height / 2);
+  context.rotate(rotation * Math.PI / 180);
+  context.filter = 'grayscale(1) contrast(1.25)';
+  context.drawImage(image, -image.naturalWidth * scale / 2, -image.naturalHeight * scale / 2, image.naturalWidth * scale, image.naturalHeight * scale);
   const blob = await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(value => value ? resolve(value) : reject(new Error('Could not prepare photo.')), 'image/jpeg', 0.9)
   );
-  return new File([blob], 'scan.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+  return new File([blob], 'scan-' + rotation + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -172,21 +178,29 @@ export default function Scanner({onImageSelected}:Props){
       const codeTask = Promise.all(photos.map(photo => readCode(photo.file))).then(decoded => decoded.find(Boolean) ?? null);
       const ocrTask = Promise.all(photos.map(async (photo, index) => {
         setProgress(nativeOcr ? 'Recognising text on this device…' : 'Preparing browser OCR…');
-        const prepared = await prepareImageForOcr(photo.file);
-        if (nativeOcr) {
-          const base64 = await fileToBase64(prepared);
-          const name = `scan-${Date.now()}-${index}.jpg`;
-          const stored = await Filesystem.writeFile({ path: name, data: base64, directory: Directory.Cache, recursive: true });
-          try {
-            const recognised = await TextRecognition.processImage({ path: stored.uri, script: Script.Latin });
-            return { text: recognised.text.trim(), confidence: null as number | null };
-          } finally {
-            await Filesystem.deleteFile({ path: name, directory: Directory.Cache }).catch(() => undefined);
+        const rotations = index === 0 && close ? [0, 90, 270] : [0];
+        const recognisedTexts: string[] = [];
+        let browserConfidence = 0;
+        for (const rotation of rotations) {
+          const prepared = await prepareImageForOcr(photo.file, rotation);
+          if (nativeOcr) {
+            const base64 = await fileToBase64(prepared);
+            const name = 'scan-' + Date.now() + '-' + index + '-' + rotation + '.jpg';
+            const stored = await Filesystem.writeFile({ path: name, data: base64, directory: Directory.Cache, recursive: true });
+            try {
+              const recognised = await TextRecognition.processImage({ path: stored.uri, script: Script.Latin });
+              if (recognised.text.trim()) recognisedTexts.push(recognised.text.trim());
+            } finally {
+              await Filesystem.deleteFile({ path: name, directory: Directory.Cache }).catch(() => undefined);
+            }
+          } else {
+            const worker = await getBrowserOcrWorker();
+            const result = await worker.recognize(prepared);
+            if (result.data.text.trim()) recognisedTexts.push(result.data.text.trim());
+            browserConfidence = Math.max(browserConfidence, Math.round(result.data.confidence));
           }
         }
-        const worker = await getBrowserOcrWorker();
-        const result = await worker.recognize(prepared);
-        return { text: result.data.text.trim(), confidence: Math.round(result.data.confidence) };
+        return { text: [...new Set(recognisedTexts)].join('\n'), confidence: nativeOcr ? null as number | null : browserConfidence };
       }));
 
       const [found, results] = await Promise.all([codeTask, ocrTask]);
@@ -237,7 +251,7 @@ export default function Scanner({onImageSelected}:Props){
       <label className="file-action">Camera<input type="file" accept="image/*" capture="environment" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'camera',true);e.currentTarget.value='';}}/></label>
       <label className="file-action">Gallery<input type="file" accept="image/*" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'gallery',true);e.currentTarget.value='';}}/></label>
     </div></div>
-    <div className="photo-previews">{full&&<div className="preview-wrap"><img src={full.url} alt="Full product"/><div><b>Full product photo</b><p>{full.file.name||'Camera photo'}</p></div></div>}{close&&<div className="preview-wrap"><img src={close.url} alt="Date label close-up"/><div><b>Date-label close-up</b><p>{close.file.name||'Camera photo'}</p></div></div>}</div>
+    <div className="photo-previews">{full&&<div className="preview-wrap"><img src={full.url} alt="Full product"/><div className="preview-info"><b>Full product photo</b><p>{full.file.name||'Camera photo'}</p><button type="button" className="remove-photo" disabled={busy} onClick={()=>{URL.revokeObjectURL(full.url);setFull(null);}}><X size={13}/> Remove photo</button></div></div>}{close&&<div className="preview-wrap"><img src={close.url} alt="Date label close-up"/><div className="preview-info"><b>Date-label close-up</b><p>{close.file.name||'Camera photo'}</p><button type="button" className="remove-photo" disabled={busy} onClick={()=>{URL.revokeObjectURL(close.url);setClose(null);}}><X size={13}/> Remove photo</button></div></div>}</div>
     <button className="primary scan-submit" onClick={()=>void scan()} disabled={busy||(!full&&!close)}><ScanText size={17}/>{busy?'Scanning…':'Read dates and scan codes'}</button>
     {busy&&<div className="notice"><RefreshCw size={16} className="spin"/> {progress||'Scanning…'} Keep this page open.</div>}
     {error&&<div className="scan-warning"><AlertTriangle size={17}/><span>{error}</span></div>}
