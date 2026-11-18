@@ -26,10 +26,21 @@ function isPlausibleDate(raw:string):boolean {
 }
 
 function classify(context:string):DateKind {
-  const s=context.toLowerCase().replace(/[.:]/g,' ');
-  if (/best\s*before|use\s*within/.test(s)) return 'best-before';
-  if (/exp(?:iry|iration)?\s*(?:date|dt)?|use\s*by|use\s*before|expires|expiry|valid\s*until/.test(s)) return 'expiry';
-  if (/mfg|manufactur(?:ed|ing)?|packed\s*on|pkd|date\s*of\s*manufacture/.test(s)) return 'manufacturing';
+  // Normalise OCR punctuation/spacing, then look for common packaging labels.
+  // Keep manufacturing and best-before checks separate from expiry wording.
+  const s=context.toLowerCase()
+    .replace(/[.:]/g,' ')
+    .replace(/[|]/g,' ')
+    .replace(/\\s+/g,' ')
+    .trim();
+
+  const bestBefore = /\\b(?:best\\s*before(?:\\s*end)?|b\\s*\\.?b\\s*\\.?e\\.?|bbe|bb\\s*date|use\\s*within|consume\\s*within|consume\\s*before)\\b/;
+  const expiry = /\\b(?:expiry|expires?|expiration|expir(?:y|ation)\\s*(?:date|dt)|exp\\s*date|exp\\.?|use\\s*by|use\\s*before|consume\\s*by|not\\s*to\\s*be\\s*used\\s*after|do\\s*not\\s*use\\s*after|valid\\s*(?:until|till|upto|up\\s*to)|validity\\s*(?:date|period)|date\\s*of\\s*(?:expiry|expiration)|discard\\s*after)\\b/;
+  const manufacturing = /\\b(?:mfg|mfd|manufactured|manufacturing|manufacture|date\\s*of\\s*manufacture|dom|production\\s*date|prod\\.?\\s*date|packed\\s*on|packing\\s*date|pkg\\.?\\s*date|pkd|date\\s*of\\s*packing)\\b/;
+
+  if (bestBefore.test(s)) return 'best-before';
+  if (expiry.test(s)) return 'expiry';
+  if (manufacturing.test(s)) return 'manufacturing';
   return 'unknown';
 }
 
