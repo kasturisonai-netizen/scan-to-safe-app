@@ -30,14 +30,14 @@ function classify(context:string):DateKind {
   const s=context.toLowerCase()
     .replace(/[.:]/g,' ')
     .replace(/[|]/g,' ')
-    .replace(/\\s+/g,' ')
+    .replace(/\s+/g,' ')
     .trim();
 
-  // Indian food, cosmetic and general packaged-goods label vocabulary.
-  // Avoid treating "shelf life" alone as an absolute expiry date: it is a duration.
-  const bestBefore = /\\b(?:best\\s*before(?:\\s*end)?|best\\s*before\\s*(?:upto|up\\s*to|within)|b\\s*\\.?b\\s*\\.?e\\.?|bbe|bbd|bb\\s*date|use\\s*within|consume\\s*within|consume\\s*before|recommended\\s*last\\s*consumption\\s*date)\\b/;
-  const expiry = /\\b(?:expiry|expires?|expiration|expir(?:y|ation)\\s*(?:date|dt)|exp\\s*(?:date|dt)|exp\\.?|use\\s*by|use\\s*before|use\\s*upto|use\\s*up\\s*to|consume\\s*by|recommended\\s*last\\s*consumption(?:\\s*date)?|last\\s*date\\s*of\\s*use|not\\s*to\\s*be\\s*used\\s*after|do\\s*not\\s*use\\s*after|valid\\s*(?:until|till|upto|up\\s*to)|validity\\s*(?:date|upto|up\\s*to)|date\\s*of\\s*(?:expiry|expiration)|discard\\s*after)\\b/;
-  const manufacturing = /\\b(?:mfg|mfd|manufactured|manufacturing|manufacture|date\\s*of\\s*manufacture|dom|production\\s*date|prod\\.?\\s*date|packed\\s*on|packing\\s*date|pkg\\.?\\s*date|pkd|date\\s*of\\s*packing)\\b/;
+  // Indian packaged food, cosmetics, household goods and OTC/pharma label wording.
+  // Keep "best before" distinct from strict expiry/use-by language.
+  const bestBefore = /\b(?:best\s*before(?:\s*end)?|best\s*before\s*(?:upto|up\s*to|within)|b\s*\.?\s*b\s*\.?\s*e\.?|bbe|bbd|bb\s*date|use\s*within|consume\s*within|consume\s*before|recommended\s*last\s*consumption(?:\s*date)?|last\s*date\s*of\s*consumption)\b/;
+  const expiry = /\b(?:expiry|expires?|expiration|expir(?:y|ation)\s*(?:date|dt|on)?|exp\s*(?:date|dt|on)|exp\.?|e\.?\s*d\.?|use\s*by|use\s*before|use\s*upto|use\s*up\s*to|consume\s*by|consume\s*before\s*date|not\s*to\s*be\s*used\s*after|do\s*not\s*use\s*after|valid\s*(?:until|till|upto|up\s*to)|validity\s*(?:date|upto|up\s*to)|date\s*of\s*(?:expiry|expiration)|discard\s*after|do\s*not\s*consume\s*after|not\s*for\s*use\s*after)\b/;
+  const manufacturing = /\b(?:mfg|mfd|manuf(?:acture|actured|acturing)?|manufactured\s*on|manufacturing\s*date|date\s*of\s*manufacture|mfg\s*(?:date|dt|on)|mfd\s*(?:date|dt|on)|dom|date\s*of\s*manufacture|production\s*date|prod\.?\s*(?:date|dt)|packed\s*on|packing\s*date|pkg\.?\s*(?:date|dt)|pkd|date\s*of\s*packing|date\s*packed)\b/;
 
   if (bestBefore.test(s)) return 'best-before';
   if (expiry.test(s)) return 'expiry';
