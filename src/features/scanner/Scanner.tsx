@@ -155,7 +155,7 @@ export default function Scanner({onImageSelected}:Props){
   const [expiry,setExpiry]=useState(''),[mfg,setMfg]=useState(''),[best,setBest]=useState('');
   const [confidence,setConfidence]=useState<number|null>(null),[ocrEngine,setOcrEngine]=useState(''),[code,setCode]=useState<CodeDetails|null>(null);
   const [codeStatus,setCodeStatus]=useState('Not checked yet'),[manualFlags,setManualFlags]=useState<string[]>([]);
-  useEffect(()=>()=>{if(full)URL.revokeObjectURL(full.url);if(close)URL.revokeObjectURL(close.url);},[full,close]);
+  // Keep each preview URL's lifetime independent. A combined effect revoked\n  // the remaining photo URL whenever the other photo was added or removed.\n  useEffect(()=>()=>{if(full)URL.revokeObjectURL(full.url);},[full]);\n  useEffect(()=>()=>{if(close)URL.revokeObjectURL(close.url);},[close]);
 
   function choose(file:File,source:ImageInputSource,isClose=false){
     if(!file.type.startsWith('image/')){setError('Please choose an image file.');return;}
