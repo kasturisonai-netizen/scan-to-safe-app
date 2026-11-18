@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Camera, ImagePlus, ScanText, RefreshCw, AlertTriangle, CheckCircle2, QrCode } from 'lucide-react';
 import { createWorker } from 'tesseract.js';
 import { BrowserMultiFormatReader } from '@zxing/browser';
@@ -161,23 +161,23 @@ export default function Scanner({onImageSelected}:Props){
   }
 
   async function scan(){
-    if(!full){setError('Add a full product photo first.');return;}
+    if(!full&&!close){setError('Add a product photo or a date-label close-up first.');return;}
     setBusy(true);setError('');setRawText('');setDates([]);setCode(null);setConfidence(null);setCodeStatus('Checking barcode and QR…');
     let worker:Awaited<ReturnType<typeof createWorker>>|undefined;
     try{
-      const photos=[full,...(close?[close]:[])];
+      const photos=[...(full?[full]:[]),...(close?[close]:[])];
       const decoded=await Promise.all(photos.map(photo=>readCode(photo.file)));
       const found=decoded.find(Boolean)??null;setCode(found);
       setCodeStatus(found?'A code was decoded. Review its contents below.':'No readable barcode or QR code was found in these photos.');
       worker=await createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text')setProgress(`Reading label… ${Math.round((m.progress??0)*100)}%`);}});
       const results:{text:string;confidence:number}[]=[];
       for(let i=0;i<photos.length;i++){
-        setProgress(i===0?'Preparing product photo…':'Preparing date-label close-up…');
+        setProgress((full&&i===0)?'Preparing product photo…':'Preparing date-label close-up…');
         const variants=await makeOcrVariants(photos[i].file);
         const attempts=variants.flatMap(variant=>[0,90,180,270].map(angle=>rotateCanvas(variant,angle)));
         const candidates:{text:string;confidence:number;score:number}[]=[];
         for(let j=0;j<attempts.length;j++){
-          setProgress('Reading ' + (i===0?'product photo':'date close-up') + '… pass ' + (j+1) + '/' + attempts.length);
+          setProgress('Reading ' + ((full&&i===0)?'product photo':'date close-up') + '… pass ' + (j+1) + '/' + attempts.length);
           const result=await worker.recognize(attempts[j]);
           const text=result.data.text.trim();
           if(text) candidates.push({text,confidence:result.data.confidence,score:ocrScore(text,result.data.confidence)});
@@ -232,7 +232,7 @@ export default function Scanner({onImageSelected}:Props){
       <label className="file-action">Gallery<input type="file" accept="image/*" disabled={busy} onChange={e=>{const f=e.target.files?.[0];if(f)choose(f,'gallery',true);e.currentTarget.value='';}}/></label>
     </div></div>
     <div className="photo-previews">{full&&<div className="preview-wrap"><img src={full.url} alt="Full product"/><div><b>Full product photo</b><p>{full.file.name||'Camera photo'}</p></div></div>}{close&&<div className="preview-wrap"><img src={close.url} alt="Date label close-up"/><div><b>Date-label close-up</b><p>{close.file.name||'Camera photo'}</p></div></div>}</div>
-    <button className="primary scan-submit" onClick={()=>void scan()} disabled={busy||!full}><ScanText size={17}/>{busy?'Scanning…':'Read dates and scan codes'}</button>
+    <button className="primary scan-submit" onClick={()=>void scan()} disabled={busy||(!full&&!close)}><ScanText size={17}/>{busy?'Scanning…':'Read dates and scan codes'}</button>
     {busy&&<div className="notice"><RefreshCw size={16} className="spin"/> {progress||'Scanning…'} Keep this page open.</div>}
     {error&&<div className="scan-warning"><AlertTriangle size={17}/><span>{error}</span></div>}
     {(rawText||code)&&!busy&&<div className="ocr-results">
