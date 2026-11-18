@@ -116,7 +116,12 @@ async function makeOcrVariants(file: File): Promise<HTMLCanvasElement[]> {
     }
     return crop;
   };
-  return [centreCrop(enhanced, 0.58), centreCrop(binary, 0.58), enhanced, binary];
+  return [
+    centreCrop(base, 0.58),       // retain colour and local contrast for small printed labels
+    centreCrop(enhanced, 0.58),   // sharpened greyscale
+    centreCrop(binary, 0.58),     // thermal/dot-matrix print
+    base, enhanced, binary,      // full-frame fallbacks
+  ];
 }
 
 function rotateCanvas(source: HTMLCanvasElement, angle: number): HTMLCanvasElement {
@@ -265,13 +270,13 @@ export default function Scanner({onImageSelected}:Props){
         const variants=await makeOcrVariants(photos[i].file);
         // Start with upright images. Only pay for rotated passes when the first readings
         // fail to identify an expiry/best-before label (common on mobile product photos).
-        const upright=variants.map(variant=>rotateCanvas(variant,0));
-        const rotated=variants.map(variant=>rotateCanvas(variant,90));
-        const attempts=[...upright,...rotated];
+        // Product date panels are frequently photographed sideways or upside down.
+        // Try all four orientations; close-up variants come first, then full-frame fallbacks.
+        const attempts=variants.flatMap(variant=>[0,90,180,270].map(angle=>rotateCanvas(variant,angle)));
         if(!worker) throw new Error('Browser OCR worker is unavailable');
         const candidates:{text:string;confidence:number;score:number}[]=[];
         for(let j=0;j<attempts.length;j++){
-          if(j>=2 && candidates.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
+          if(j>=4 && candidates.some(item=>extractDateCandidates(item.text).some(candidate=>candidate.kind==='expiry'||candidate.kind==='best-before'))) break;
           setProgress('Reading ' + (isClosePhoto?'date close-up':'product photo') + '… pass ' + (j+1) + '/' + attempts.length);
           const result=await worker.recognize(attempts[j]);
           const text=result.data.text.trim();
