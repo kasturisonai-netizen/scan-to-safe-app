@@ -10,27 +10,87 @@ interface Props { onImageSelected?: (file: File, source: ImageInputSource) => vo
 interface Photo { file: File; url: string; }
 interface CodeDetails { text: string; format: string; gtin?: string; batch?: string; expiry?: string; bestBefore?: string; production?: string; serial?: string; }
 
-function preprocess(file: File): Promise<HTMLCanvasElement> {
+function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width; canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) { URL.revokeObjectURL(url); reject(new Error('Canvas unavailable')); return; }
-      ctx.drawImage(img, 0, 0);
-      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      for (let i=0;i<pixels.data.length;i+=4) {
-        const grey = .299*pixels.data[i]+.587*pixels.data[i+1]+.114*pixels.data[i+2];
-        const adjusted = Math.max(0,Math.min(255,(grey-128)*1.4+128));
-        pixels.data[i]=pixels.data[i+1]=pixels.data[i+2]=adjusted;
-      }
-      ctx.putImageData(pixels,0,0); URL.revokeObjectURL(url); resolve(canvas);
-    };
-    img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Image could not load'));};
-    img.src=url;
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image could not load')); };
+    img.src = url;
   });
+}
+
+async function makeOcrVariants(file: File): Promise<HTMLCanvasElement[]> {
+  const img = await loadImage(file);
+  const scale = Math.min(3, Math.max(1.5, 2200 / Math.max(img.width, img.height)));
+  const width = Math.round(img.width * scale), height = Math.round(img.height * scale);
+  const base = document.createElement('canvas');
+  base.width = width; base.height = height;
+  const ctx = base.getContext('2d');
+  if (!ctx) throw new Error('Canvas unavailable');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, width, height);
+  const pixels = ctx.getImageData(0, 0, width, height);
+  const grey = new Uint8ClampedArray(width * height);
+  const histogram = new Array<number>(256).fill(0);
+  for (let p = 0, i = 0; p < grey.length; p++, i += 4) {
+    const value = Math.max(0, Math.min(255, (0.299 * pixels.data[i] + 0.587 * pixels.data[i + 1] + 0.114 * pixels.data[i + 2] - 128) * 1.65 + 128));
+    grey[p] = value; histogram[Math.round(value)]++;
+  }
+  // Otsu threshold creates a clean high-contrast copy for dotted thermal printing.
+  const total = grey.length;
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * histogram[i];
+  let sumB = 0, weightB = 0, maxVariance = -1, threshold = 128;
+  for (let i = 0; i < 256; i++) {
+    weightB += histogram[i];
+    if (!weightB) continue;
+    const weightF = total - weightB;
+    if (!weightF) break;
+    sumB += i * histogram[i];
+    const variance = weightB * weightF * Math.pow(sumB / weightB - (sum - sumB) / weightF, 2);
+    if (variance > maxVariance) { maxVariance = variance; threshold = i; }
+  }
+  const enhanced = document.createElement('canvas');
+  enhanced.width = width; enhanced.height = height;
+  const ectx = enhanced.getContext('2d');
+  const binary = document.createElement('canvas');
+  binary.width = width; binary.height = height;
+  const bctx = binary.getContext('2d');
+  if (!ectx || !bctx) throw new Error('Canvas unavailable');
+  const ep = ectx.createImageData(width, height);
+  const bp = bctx.createImageData(width, height);
+  for (let p = 0, i = 0; p < grey.length; p++, i += 4) {
+    const v = grey[p], bw = v > threshold ? 255 : 0;
+    ep.data[i] = ep.data[i + 1] = ep.data[i + 2] = v; ep.data[i + 3] = 255;
+    bp.data[i] = bp.data[i + 1] = bp.data[i + 2] = bw; bp.data[i + 3] = 255;
+  }
+  ectx.putImageData(ep, 0, 0); bctx.putImageData(bp, 0, 0);
+  return [enhanced, binary];
+}
+
+function rotateCanvas(source: HTMLCanvasElement, angle: number): HTMLCanvasElement {
+  const sideways = angle === 90 || angle === 270;
+  const canvas = document.createElement('canvas');
+  canvas.width = sideways ? source.height : source.width;
+  canvas.height = sideways ? source.width : source.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return source;
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate(angle * Math.PI / 180);
+  ctx.drawImage(source, -source.width / 2, -source.height / 2);
+  return canvas;
+}
+
+function ocrScore(text: string, confidence: number): number {
+  const lower = text.toLowerCase();
+  const candidates = extractDateCandidates(text);
+  const labelled = candidates.filter(x => x.kind !== 'unknown').length;
+  const dateLike = candidates.length;
+  const labels = (lower.match(/exp|expiry|use by|best before|mfg|manufactur|batch|lot|pkd|packed/g) ?? []).length;
+  // Prefer readable date/label content over a high-confidence result that contains no useful dates.
+  return confidence * 0.2 + labelled * 45 + dateLike * 12 + labels * 5 + Math.min(text.length, 1200) * 0.005;
 }
 
 function parseCode(raw: string, format: string): CodeDetails {
@@ -114,29 +174,17 @@ export default function Scanner({onImageSelected}:Props){
       worker=await createWorker('eng',1,{logger:m=>{if(m.status==='recognizing text')setProgress(`Reading label… ${Math.round((m.progress??0)*100)}%`);}});
       const results:{text:string;confidence:number}[]=[];
       for(let i=0;i<photos.length;i++){
-        setProgress(i===0?'Reading full product photo (checking rotation)…':'Reading date-label close-up (checking rotation)…');
-        const base=await preprocess(photos[i].file);
-        const attempts: HTMLCanvasElement[] = [];
-        for (const angle of [0, 90, 180, 270]) {
-          const rotated=document.createElement('canvas');
-          const sideways=angle===90||angle===270;
-          rotated.width=(sideways?base.height:base.width)*2;
-          rotated.height=(sideways?base.width:base.height)*2;
-          const ctx=rotated.getContext('2d');
-          if(!ctx) continue;
-          ctx.translate(rotated.width/2,rotated.height/2);
-          ctx.rotate(angle*Math.PI/180);
-          ctx.drawImage(base,-base.width,-base.height,base.width*2,base.height*2);
-          attempts.push(rotated);
-        }
-        let bestResult:{text:string;confidence:number}|null=null;
+        setProgress(i===0?'Preparing product photo…':'Preparing date-label close-up…');
+        const variants=await makeOcrVariants(photos[i].file);
+        const attempts=variants.flatMap(variant=>[0,90,270].map(angle=>rotateCanvas(variant,angle)));
+        let bestResult:{text:string;confidence:number;score:number}|null=null;
         for(let j=0;j<attempts.length;j++){
-          setProgress('Reading ' + (i===0?'product photo':'date close-up') + '… orientation ' + (j+1) + '/' + attempts.length);
+          setProgress('Reading ' + (i===0?'product photo':'date close-up') + '… pass ' + (j+1) + '/' + attempts.length);
           const result=await worker.recognize(attempts[j]);
-          const candidate={text:result.data.text.trim(),confidence:result.data.confidence};
-          if(!bestResult||candidate.confidence>bestResult.confidence) bestResult=candidate;
+          const candidate={text:result.data.text.trim(),confidence:result.data.confidence,score:ocrScore(result.data.text,result.data.confidence)};
+          if(!bestResult||candidate.score>bestResult.score) bestResult=candidate;
         }
-        if(bestResult) results.push(bestResult);
+        if(bestResult) results.push({text:bestResult.text,confidence:bestResult.confidence});
       }
       const text=results.map(x=>x.text).filter(Boolean).join('\n\n--- CLOSE-UP ---\n\n');
       setRawText(text);setConfidence(results.length?Math.round(results.reduce((a,b)=>a+b.confidence,0)/results.length):0);
